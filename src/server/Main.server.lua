@@ -963,14 +963,7 @@ local function openLiftGrate(s)
 			grate:PivotTo(closed + V(0, 15 * i / 30, 0))
 			task.wait(0.03)
 		end
-		task.wait(8)
-		for i = 1, 30 do
-			if not grate.Parent then
-				return
-			end
-			grate:PivotTo(closed + V(0, 15 * (1 - i / 30), 0))
-			task.wait(0.03)
-		end
+		-- решётка остаётся открытой, чтобы никто не оказался заперт в лифте
 	end)
 end
 
@@ -1057,7 +1050,7 @@ end
 ------------------------------------------------------------------
 local lifts = {}
 for id, e in pairs(lobby.elevators) do
-	lifts[id] = { id = id, zone = e.zone, outside = e.outside, host = nil, friendsOnly = false, max = Config.Elevator.MaxPlayers, countdownEnd = nil, riding = false, goNow = false }
+	lifts[id] = { id = id, label = e.label, zone = e.zone, outside = e.outside, host = nil, friendsOnly = false, max = Config.Elevator.MaxPlayers, countdownEnd = nil, riding = false, goNow = false }
 end
 local friendCache = {}
 local function isFriend(a, b)
@@ -1138,6 +1131,10 @@ task.spawn(function()
 					lift.goNow = false
 				end
 				local left = lift.countdownEnd and math.max(0, math.ceil(lift.countdownEnd - os.clock())) or -1
+				local dname = Config.Difficulty[lift.id].Name
+				if lift.label then
+					lift.label.Text = #allowed > 0 and (dname .. "  " .. #allowed .. "/" .. lift.max .. "  ·  " .. left .. "с") or dname
+				end
 				for _, p in ipairs(Players:GetPlayers()) do
 					if table.find(allowed, p) then
 						p:SetAttribute("LiftId", lift.id)
@@ -1238,12 +1235,52 @@ end)
 ------------------------------------------------------------------
 -- Игроки
 ------------------------------------------------------------------
+-- Квадратный персонаж (R6) из аватара игрока: одежда и цвета сохраняются
+local animTemplate = Shared:WaitForChild("R6Animate")
+local descCache = {}
+local function morphR6(p, oldChar)
+	local desc = descCache[p]
+	if not desc then
+		local ok, d = pcall(function()
+			return Players:GetHumanoidDescriptionFromUserId(math.max(1, p.UserId))
+		end)
+		desc = ok and d or Instance.new("HumanoidDescription")
+		descCache[p] = desc
+	end
+	local ok, model = pcall(function()
+		return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R6)
+	end)
+	if not ok or not model or not oldChar.Parent then
+		return false
+	end
+	model.Name = p.Name
+	model:SetAttribute("Morphed", true)
+	local oldAnim = model:FindFirstChild("Animate")
+	if oldAnim then
+		oldAnim:Destroy()
+	end
+	local anim = animTemplate:Clone()
+	anim.Name = "Animate"
+	anim.Disabled = false
+	anim.Parent = model
+	model:PivotTo(oldChar:GetPivot())
+	p.Character = model
+	model.Parent = workspace
+	oldChar:Destroy()
+	return true
+end
+
 local function onCharacter(p, char)
 	local st = state[p]
 	local hrp = char:WaitForChild("HumanoidRootPart", 5)
 	local hum = char:WaitForChild("Humanoid", 5)
 	if not hrp or not hum or not st then
 		return
+	end
+	if hum.RigType == Enum.HumanoidRigType.R15 and not char:GetAttribute("Morphed") then
+		if morphR6(p, char) then
+			return -- CharacterAdded сработает ещё раз уже для квадратного персонажа
+		end
 	end
 	hum.BreakJointsOnDeath = false
 	hum.WalkSpeed = Config.WalkSpeed

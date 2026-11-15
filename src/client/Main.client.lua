@@ -874,11 +874,12 @@ local function applyLighting(phase, a)
 		return x:Lerp(y, night)
 	end
 	Lighting.ClockTime = clock
-	Lighting.Brightness = 3 - night * 2.2
-	Lighting.Ambient = mix(RGB(70, 66, 60), RGB(14, 16, 26))
-	Lighting.OutdoorAmbient = mix(RGB(140, 135, 125), RGB(30, 36, 60))
+	Lighting.Brightness = 4 - night * 2.6
+	Lighting.ExposureCompensation = 0.35 - night * 0.1
+	Lighting.Ambient = mix(RGB(120, 115, 105), RGB(48, 52, 72))
+	Lighting.OutdoorAmbient = mix(RGB(185, 180, 170), RGB(70, 80, 110))
 	if atmo then
-		atmo.Density = 0.3 + night * 0.15
+		atmo.Density = 0.25 + night * 0.12
 		atmo.Haze = 1.2 + night * 1.2
 		atmo.Color = mix(RGB(200, 190, 170), RGB(60, 70, 100))
 		atmo.Decay = mix(RGB(110, 100, 90), RGB(20, 22, 40))

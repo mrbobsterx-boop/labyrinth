@@ -8,15 +8,15 @@ Config.GameTitle = "ЛАБИРИНТ"
 Config.DevTools = true
 
 Config.Maze = {
-	Cells = 29, -- лабиринт 29 x 29 клеток (нечётное число)
+	Cells = 33, -- лабиринт 33 x 33 клеток (≈ 1 км: 33 x 32 = 1056)
 	CellSize = 32, -- ширина коридора
 	WallHeight = 56,
 	WallThickness = 4,
-	ClearingCells = 7, -- поляна в центре 7 x 7 клеток (224 x 224)
+	ClearingCells = 13, -- поляна в центре 13 x 13 клеток (416 x 416)
 	ExtraOpenings = 0.07,
-	Mines = 6,
-	Chests = 22,
-	Cracks = 26, -- узкие щели в стенах (пролезть можно только пригнувшись)
+	Mines = 8,
+	Chests = 30,
+	Cracks = 30, -- узкие щели в стенах (пролезть можно только пригнувшись)
 }
 Config.GateWidth = 32
 Config.SlotSpacing = 3000 -- у каждой группы свой лабиринт, далеко друг от друга

@@ -225,7 +225,7 @@ function World.BuildLobby()
 			Parts.span(m, "Hazard", o, V(x + k * 2 - 0.5, 0, -27), V(x + k * 2 + 0.5, 0.05, -25), (k % 2 == 0) and RGB(220, 180, 30) or RGB(20, 20, 20), M.SmoothPlastic)
 		end
 		local zone = Parts.span(m, "LiftZone", o, V(x - 8.5, 0, -44.5), V(x + 8.5, 12, -27.5), nil, nil, { Transparency = 1, CanCollide = false, CanQuery = false })
-		elevators[l.id] = { zone = zone, door = o + V(x, 0, -27), outside = CFrame.lookAt(o + V(x, 3, -20), o + V(x, 3, 0)) }
+		elevators[l.id] = { zone = zone, door = o + V(x, 0, -27), outside = CFrame.lookAt(o + V(x, 3, -20), o + V(x, 3, 0)), label = t }
 	end
 
 	-- лампы
@@ -305,10 +305,13 @@ end
 ------------------------------------------------------------------
 -- Рельеф: земля лабиринта, трава поляны, река
 ------------------------------------------------------------------
-local RIVER = { V(-116, 0, -40), V(-44, 0, -22), V(32, 0, 6), V(116, 0, 22) }
+-- озеро сверху слева (северо-запад), из него на восток течёт река
+local LAKE = V(-112, 0, -112)
+local LAKE_R, SAND_R = 74, 92
+local RIVER = { V(-50, 0, -96), V(40, 0, -74), V(120, 0, -40), V(196, 0, -26) }
 
-local function distToRiver(p)
-	local best = math.huge
+local function distToWater(p)
+	local best = (V(p.X, 0, p.Z) - LAKE).Magnitude - LAKE_R
 	for k = 1, #RIVER - 1 do
 		local a, b = RIVER[k], RIVER[k + 1]
 		local ab = b - a
@@ -324,6 +327,9 @@ function World.BuildTerrain(O)
 	local size = HALF * 2 + 300
 	terrain:FillBlock(CFrame.new(O + V(0, -8, 0)), V(size, 16, size), M.Ground)
 	terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(CLEAR_HALF * 2, 4, CLEAR_HALF * 2), M.Grass)
+	-- большое озеро с песчаным пляжем
+	terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -2, 0)), 4, SAND_R, M.Sand)
+	terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -8, 0)), 16, LAKE_R, M.Water)
 	-- река: сначала песчаный берег, потом вода до уровня земли
 	for k = 1, #RIVER - 1 do
 		local a, b = O + RIVER[k], O + RIVER[k + 1]
@@ -360,21 +366,24 @@ function World.BuildClearing(parent, seed, O)
 	local refs = { model = m, nodes = {} }
 	local E = CLEAR_HALF
 
-	-- мост через реку (по центральной тропе)
-	local bz = -10
-	Parts.span(m, "Bridge", O, V(-5, 0.3, bz - 16), V(5, 1, bz + 16), WOOD, M.WoodPlanks)
+	-- мост через реку на тропе к северным воротам
+	local bz = -82
+	Parts.span(m, "Bridge", O, V(-5, 0.3, bz - 18), V(5, 1, bz + 18), WOOD, M.WoodPlanks)
 	for _, x in ipairs({ -5, 5 }) do
-		Parts.span(m, "BridgeRail", O, V(x - 0.3, 1, bz - 16), V(x + 0.3, 3.8, bz + 16), RGB(70, 48, 30), M.Wood)
-		for z = bz - 15, bz + 15, 5 do
+		Parts.span(m, "BridgeRail", O, V(x - 0.3, 1, bz - 18), V(x + 0.3, 3.8, bz + 18), RGB(70, 48, 30), M.Wood)
+		for z = bz - 17, bz + 17, 5 do
 			Parts.span(m, "BridgePost", O, V(x - 0.4, 0, z - 0.4), V(x + 0.4, 4.2, z + 0.4), RGB(70, 48, 30), M.Wood)
 		end
 	end
-	-- тропинки к воротам
+	-- тропинки от лифта к четырём воротам
 	Parts.span(m, "Path", O, V(-3.5, 0, -E + 2), V(3.5, 0.06, E - 2), RGB(120, 100, 70), M.Ground)
-	Parts.span(m, "Path", O, V(-E + 2, 0, 46), V(E - 2, 0.06, 53), RGB(120, 100, 70), M.Ground)
+	Parts.span(m, "Path", O, V(-E + 2, 0, -3.5), V(E - 2, 0.06, 3.5), RGB(120, 100, 70), M.Ground)
+	-- деревянный причал на озере
+	local dock = O + LAKE + V(52, 0, 40)
+	Parts.box(m, "Dock", CFrame.lookAt(dock + V(0, 0.6, 0), O + LAKE + V(0, 0.6, 0)) * CFrame.new(0, 0, -8), V(6, 0.6, 26), WOOD, M.WoodPlanks)
 
-	-- лифт на поляне
-	local e = O + V(0, 0, 78)
+	-- лифт в центре поляны
+	local e = O
 	Parts.span(m, "LiftFloor", e, V(-9, 0, -9), V(9, 0.6, 9), RGB(40, 40, 42), M.DiamondPlate)
 	Parts.span(m, "LiftRoof", e, V(-9.5, 16, -9.5), V(9.5, 17, 9.5), METAL, M.DiamondPlate)
 	for _, x in ipairs({ -9, 9 }) do
@@ -398,11 +407,11 @@ function World.BuildClearing(parent, seed, O)
 	refs.liftPos = e
 
 	-- ящик с припасами у лифта
-	local crate = Parts.span(m, "SupplyCrate", O, V(-20, 0, 66), V(-14, 3.5, 71), RGB(120, 95, 60), M.WoodPlanks)
+	local crate = Parts.span(m, "SupplyCrate", O, V(-20, 0, -16), V(-14, 3.5, -11), RGB(120, 95, 60), M.WoodPlanks)
 	refs.supplyPrompt = prompt(crate, "Взять припасы", "Начальные ресурсы", 0, 10)
 
 	-- костёр с брёвнами вокруг
-	local fc = O + V(-24, 0, 26)
+	local fc = O + V(34, 0, 34)
 	local fireBase = Parts.box(m, "Campfire", CFrame.new(fc + V(0, 0.3, 0)), V(4, 0.6, 4), RGB(50, 34, 26), M.Slate)
 	local fire = Instance.new("Fire")
 	fire.Size = 6
@@ -417,24 +426,24 @@ function World.BuildClearing(parent, seed, O)
 	local function freeSpot(minRiver)
 		for _ = 1, 60 do
 			local p = V(rng:NextNumber(-E + 10, E - 10), 0, rng:NextNumber(-E + 10, E - 10))
-			local ok = distToRiver(p) > (minRiver or 14)
+			local ok = distToWater(p) > (minRiver or 14)
 				and math.abs(p.X) > 8
-				and math.abs(p.Z - 50) > 8
-				and (p - V(0, 0, 78)).Magnitude > 22
-				and (p - V(-24, 0, 26)).Magnitude > 14
+				and math.abs(p.Z) > 8
+				and p.Magnitude > 30
+				and (p - V(34, 0, 34)).Magnitude > 14
 			if ok then
 				return O + p
 			end
 		end
 		return O + V(rng:NextNumber(-E + 10, E - 10), 0, -E + 14)
 	end
-	for _ = 1, 48 do
-		table.insert(refs.nodes, node(m, "tree", freeSpot(16), rng))
+	for _ = 1, 95 do
+		table.insert(refs.nodes, node(m, "tree", freeSpot(18), rng))
 	end
-	for _ = 1, 10 do
+	for _ = 1, 16 do
 		table.insert(refs.nodes, node(m, "stone", freeSpot(10), rng))
 	end
-	for _ = 1, 12 do
+	for _ = 1, 20 do
 		local p = freeSpot(10)
 		local bush = Parts.box(m, "BerryBush", CFrame.new(p + V(0, 1.8, 0)), V(5, 3.8, 5), RGB(46, 84, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball })
 		for _ = 1, 7 do
@@ -446,12 +455,12 @@ function World.BuildClearing(parent, seed, O)
 		tag(prompt(bush, "Собрать ягоды", "Куст", 0.5, 10), "BerryPrompt")
 	end
 	-- высокая трава у реки (из неё делаются бинты и верёвки)
-	for _ = 1, 16 do
+	for _ = 1, 26 do
 		local p
 		for _ = 1, 40 do
 			local cand = V(rng:NextNumber(-E + 8, E - 8), 0, rng:NextNumber(-E + 8, E - 8))
-			local d = distToRiver(cand)
-			if d > 15 and d < 24 and math.abs(cand.X) > 7 then
+			local d = distToWater(cand)
+			if d > 18 and d < 30 and math.abs(cand.X) > 7 then
 				p = O + cand
 				break
 			end
@@ -466,9 +475,9 @@ function World.BuildClearing(parent, seed, O)
 		end
 	end
 	-- цветы
-	for _ = 1, 70 do
+	for _ = 1, 160 do
 		local p = V(rng:NextNumber(-E + 4, E - 4), 0, rng:NextNumber(-E + 4, E - 4))
-		if distToRiver(p) > 14 then
+		if distToWater(p) > 20 then
 			local c = ({ RGB(230, 210, 80), RGB(200, 80, 120), RGB(240, 240, 240), RGB(150, 120, 230) })[rng:NextInteger(1, 4)]
 			Parts.box(m, "Flower", CFrame.new(O + p + V(0, 0.4, 0)), V(0.7, 0.3, 0.7), c, M.SmoothPlastic, NOCOLLIDE)
 		end
@@ -774,12 +783,22 @@ function World.BuildMaze(parent, seed, O)
 		seg(mid + 3, to + T / 2, 0, H, "MazeWall")
 		seg(mid - 3, mid + 3, 9, H, "MazeWall")
 		seg(mid - 3, mid + 3, 4, 9, "CrawlCover", "CrawlCover")
-		-- обломки по краям щели
-		for _ = 1, 3 do
-			local off = rng:NextNumber(-5, 5)
-			local p = axis == "X" and V(mid + off, 0.5, fixed + rng:NextNumber(-3, 3)) or V(fixed + rng:NextNumber(-3, 3), 0.5, mid + off)
-			if math.abs(off) > 3.5 then
-				Parts.box(m, "Rubble", CFrame.new(O + p) * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), 0), V(1.4, 1, 1.2), WALL_DARK, M.Slate, NOCOLLIDE)
+		-- пролом: неровные камни по краю дыры с обеих сторон стены, мох и обломки на полу
+		for _, side in ipairs({ -1, 1 }) do
+			for k = 0, 6 do
+				local a = k / 6 * math.pi
+				local along = -math.cos(a) * 3.6
+				local up = math.sin(a) * 5.2
+				local face = fixed + side * (T / 2 + 0.25)
+				local p = axis == "X" and V(mid + along, up, face) or V(face, up, mid + along)
+				Parts.box(m, "CrackStone", CFrame.new(O + p) * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), rng:NextNumber(0, 3)), V(rng:NextNumber(1.2, 2), rng:NextNumber(1, 1.6), rng:NextNumber(0.8, 1.2)), WALL_DARK, M.Slate, NOCOLLIDE)
+			end
+			local mp = axis == "X" and V(mid, 0.1, fixed + side * (T / 2 + 1.5)) or V(fixed + side * (T / 2 + 1.5), 0.1, mid)
+			Parts.box(m, "CrackMoss", CFrame.new(O + mp), axis == "X" and V(7, 0.2, 2.5) or V(2.5, 0.2, 7), IVY, M.LeafyGrass, NOCOLLIDE)
+			for _ = 1, 3 do
+				local off = rng:NextNumber(-6, 6)
+				local rp = axis == "X" and V(mid + off, 0.4, fixed + side * rng:NextNumber(3, 6)) or V(fixed + side * rng:NextNumber(3, 6), 0.4, mid + off)
+				Parts.box(m, "Rubble", CFrame.new(O + rp) * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), 0), V(1.2, 0.8, 1), WALL_DARK, M.Slate, NOCOLLIDE)
 			end
 		end
 	end

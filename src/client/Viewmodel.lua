@@ -281,8 +281,8 @@ function Viewmodel.update(dt, visible, moving, sprinting)
 	if kind == "fists" and swingT and punchLeft then
 		rPush, lPush = CFrame.new(), push
 	end
-	local rShoulder = base * CFrame.new(1.25, -1.85, 0.35) * rPush * (kind == "fists" and CFrame.new() or rot) * rAim
-	local lShoulder = base * CFrame.new(-1.25, -1.9, 0.35) * lPush * (kind == "spear" and push or CFrame.new()) * lAim
+	local rShoulder = base * CFrame.new(1.05, -1.5, 0.25) * rPush * (kind == "fists" and CFrame.new() or rot) * rAim
+	local lShoulder = base * CFrame.new(-1.05, -1.55, 0.25) * lPush * (kind == "spear" and push or CFrame.new()) * lAim
 	local grip = placeArm("right", rShoulder)
 	placeArm("left", lShoulder)
 
