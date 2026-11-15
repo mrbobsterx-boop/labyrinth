@@ -983,14 +983,39 @@ function World.BuildMaze(parent, seed, O)
 		tl.TextScaled = true
 		tl.TextColor3 = RGB(140, 255, 170)
 		tl.Parent = sg
-		-- площадка снаружи
-		local pad = b * CFrame.new(0, 0, -90)
-		Parts.box(m, "Helipad", pad * CFrame.new(0, 0.3, 0), V(70, 0.6, 70), RGB(70, 72, 74), M.Concrete)
-		Parts.box(m, "HMark", pad * CFrame.new(-6, 0.65, 0), V(2.5, 0.1, 18), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
-		Parts.box(m, "HMark", pad * CFrame.new(6, 0.65, 0), V(2.5, 0.1, 18), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
-		Parts.box(m, "HMark", pad * CFrame.new(0, 0.65, 0), V(12, 0.1, 2.5), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+		-- считыватель ключ-карты на стене у ворот (на уровне груди)
+		local reader = Parts.box(m, "CardReader", b * CFrame.new(C / 2 - T / 2 - 0.4, 4.8, -46) * CFrame.Angles(0, -math.pi / 2, 0), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
+		local readerLight = Parts.box(m, "ReaderLight", reader.CFrame * CFrame.new(0, 0.8, -0.3), V(0.5, 0.3, 0.1), RGB(255, 40, 40), M.Neon, NOCOLLIDE)
+		Parts.box(m, "ReaderSlot", reader.CFrame * CFrame.new(0, -0.2, -0.3), V(1, 0.12, 0.1), RGB(10, 10, 10), M.SmoothPlastic, NOCOLLIDE)
+		refs.readerLight = readerLight
+
+		-- снаружи: лесная поляна, где ждёт вертолёт
+		local pad = b * CFrame.new(0, 0, -95)
+		local padGround = Parts.box(m, "ForestClearing", pad * CFrame.new(0, 0.05, 0), V(60, 0.1, 60), RGB(70, 105, 55), M.Grass, NOCOLLIDE)
+		local _ = padGround
+		local frng = Random.new(seed + 99)
+		for _ = 1, 70 do
+			local a = frng:NextNumber(0, math.pi * 2)
+			local r = frng:NextNumber(34, 120)
+			local local2 = V(math.cos(a) * r, 0, math.sin(a) * r)
+			-- не ставим деревья на дорогу от ворот к поляне
+			local rel = pad * CFrame.new(local2)
+			local toMouth = (b:PointToObjectSpace(rel.Position))
+			if not (math.abs(toMouth.X) < 14 and toMouth.Z > -100 and toMouth.Z < 0) then
+				local h = frng:NextNumber(26, 40)
+				local tp = rel.Position
+				Parts.box(m, "ForestTrunk", CFrame.new(tp + V(0, h / 2, 0)), V(2.4, h, 2.4), RGB(80, 58, 40), M.Wood)
+				for k = 1, 4 do
+					local sz = frng:NextNumber(10, 15) * (1 - k * 0.12)
+					Parts.box(m, "ForestLeaves", CFrame.new(tp + V(frng:NextNumber(-2, 2), h * 0.6 + k * 3, frng:NextNumber(-2, 2))), V(sz, sz * 0.8, sz), RGB(40, frng:NextInteger(85, 110), 45), M.LeafyGrass, {
+						Shape = Enum.PartType.Ball,
+						CanCollide = false,
+					})
+				end
+			end
+		end
 		refs.exitDoor = door
-		refs.exitPrompt = prompt(door, "Открыть выход", "Нужен Ключ Лабиринта", 2, 14)
+		refs.exitPrompt = prompt(reader, "Вставить ключ-карту", "Считыватель", 1.2, 9)
 		refs.exitOut = b
 		refs.helipad = pad
 	end

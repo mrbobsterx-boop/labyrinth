@@ -239,7 +239,7 @@ Items.Resources = {
 	fang = { Name = "Клык Скрежетника", Order = 6 },
 	berry = { Name = "Ягоды (H — съесть)", Order = 7 },
 	bandage = { Name = "Бинт (поднять друга)", Order = 8 },
-	key = { Name = "КЛЮЧ ЛАБИРИНТА", Order = 9 },
+	key = { Name = "КЛЮЧ-КАРТА ВЫХОДА", Order = 9 },
 }
 
 -- Kind: pickaxe / axe / sword / spear / torch. Tier — что может добывать.
@@ -1225,7 +1225,7 @@ local function connectSessionPrompts(s)
 				gain("key", 1)
 				gain("crystal", 3)
 				gain("iron", 5)
-				notifySession(s, p.DisplayName .. " нашёл КЛЮЧ ЛАБИРИНТА! Теперь найдите выход!")
+				notifySession(s, p.DisplayName .. " нашёл КЛЮЧ-КАРТУ! Найдите выход и вставьте её в считыватель.")
 			else
 				local depth = c.model:GetAttribute("Depth") or 5
 				local pool = { { "wood", 4, 8 }, { "stone", 4, 8 }, { "berry", 2, 4 }, { "fiber", 2, 4 }, { "bandage", 1, 2 } }
@@ -1264,12 +1264,18 @@ local function connectSessionPrompts(s)
 				end
 			end
 			if not hasKey then
-				notify(p, "Заперто. Нужен Ключ Лабиринта — он в золотом сундуке в самом дальнем тупике (над ним светится ключ).")
+				notify(p, "Нужна ключ-карта — она в золотом сундуке в самом дальнем тупике (над ним светится ключ).")
 				return
 			end
 			s.won = true
 			clearMonsters(s, true)
-			TweenService:Create(s.maze.exitDoor, TweenInfo.new(3), { CFrame = s.maze.exitDoor.CFrame + V(0, World.HALF, 0) }):Play()
+			if s.maze.readerLight then
+				s.maze.readerLight.Color = Color3.fromRGB(60, 255, 90)
+			end
+			notifySession(s, p.DisplayName .. " вставил ключ-карту! Ворота открываются...")
+			task.delay(1, function()
+				TweenService:Create(s.maze.exitDoor, TweenInfo.new(4, Enum.EasingStyle.Sine), { CFrame = s.maze.exitDoor.CFrame + V(0, 60, 0) }):Play()
+			end)
 			local coins = Config.CoinsEscape * s.diff.Coins
 			for _, q in ipairs(s.players) do
 				addCoins(q, coins)
@@ -1277,9 +1283,9 @@ local function connectSessionPrompts(s)
 				if hrp then
 					hrp.Anchored = true
 				end
-				R.Outro:FireClient(q, s.maze.helipad, s.maze.exitOut, s.players, s.day, coins)
+				R.Outro:FireClient(q, s.maze.helipad, s.maze.exitOut, s.players, s.day, coins, s.O)
 			end
-			task.delay(20, function()
+			task.delay(32, function()
 				endSession(s)
 			end)
 		end)
@@ -3289,14 +3295,39 @@ function World.BuildMaze(parent, seed, O)
 		tl.TextScaled = true
 		tl.TextColor3 = RGB(140, 255, 170)
 		tl.Parent = sg
-		-- площадка снаружи
-		local pad = b * CFrame.new(0, 0, -90)
-		Parts.box(m, "Helipad", pad * CFrame.new(0, 0.3, 0), V(70, 0.6, 70), RGB(70, 72, 74), M.Concrete)
-		Parts.box(m, "HMark", pad * CFrame.new(-6, 0.65, 0), V(2.5, 0.1, 18), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
-		Parts.box(m, "HMark", pad * CFrame.new(6, 0.65, 0), V(2.5, 0.1, 18), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
-		Parts.box(m, "HMark", pad * CFrame.new(0, 0.65, 0), V(12, 0.1, 2.5), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+		-- считыватель ключ-карты на стене у ворот (на уровне груди)
+		local reader = Parts.box(m, "CardReader", b * CFrame.new(C / 2 - T / 2 - 0.4, 4.8, -46) * CFrame.Angles(0, -math.pi / 2, 0), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
+		local readerLight = Parts.box(m, "ReaderLight", reader.CFrame * CFrame.new(0, 0.8, -0.3), V(0.5, 0.3, 0.1), RGB(255, 40, 40), M.Neon, NOCOLLIDE)
+		Parts.box(m, "ReaderSlot", reader.CFrame * CFrame.new(0, -0.2, -0.3), V(1, 0.12, 0.1), RGB(10, 10, 10), M.SmoothPlastic, NOCOLLIDE)
+		refs.readerLight = readerLight
+
+		-- снаружи: лесная поляна, где ждёт вертолёт
+		local pad = b * CFrame.new(0, 0, -95)
+		local padGround = Parts.box(m, "ForestClearing", pad * CFrame.new(0, 0.05, 0), V(60, 0.1, 60), RGB(70, 105, 55), M.Grass, NOCOLLIDE)
+		local _ = padGround
+		local frng = Random.new(seed + 99)
+		for _ = 1, 70 do
+			local a = frng:NextNumber(0, math.pi * 2)
+			local r = frng:NextNumber(34, 120)
+			local local2 = V(math.cos(a) * r, 0, math.sin(a) * r)
+			-- не ставим деревья на дорогу от ворот к поляне
+			local rel = pad * CFrame.new(local2)
+			local toMouth = (b:PointToObjectSpace(rel.Position))
+			if not (math.abs(toMouth.X) < 14 and toMouth.Z > -100 and toMouth.Z < 0) then
+				local h = frng:NextNumber(26, 40)
+				local tp = rel.Position
+				Parts.box(m, "ForestTrunk", CFrame.new(tp + V(0, h / 2, 0)), V(2.4, h, 2.4), RGB(80, 58, 40), M.Wood)
+				for k = 1, 4 do
+					local sz = frng:NextNumber(10, 15) * (1 - k * 0.12)
+					Parts.box(m, "ForestLeaves", CFrame.new(tp + V(frng:NextNumber(-2, 2), h * 0.6 + k * 3, frng:NextNumber(-2, 2))), V(sz, sz * 0.8, sz), RGB(40, frng:NextInteger(85, 110), 45), M.LeafyGrass, {
+						Shape = Enum.PartType.Ball,
+						CanCollide = false,
+					})
+				end
+			end
+		end
 		refs.exitDoor = door
-		refs.exitPrompt = prompt(door, "Открыть выход", "Нужен Ключ Лабиринта", 2, 14)
+		refs.exitPrompt = prompt(reader, "Вставить ключ-карту", "Считыватель", 1.2, 9)
 		refs.exitOut = b
 		refs.helipad = pad
 	end
@@ -4091,61 +4122,111 @@ local function buildHeli(cf)
 	return m, setCF
 end
 
-remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins)
+remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins, mazeCenter)
 	cutscene = true
 	craft.Visible = false
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Scriptable
 	local temp = {}
-	local camPos = (exitOut * CFrame.new(10, 10, -8)).Position
-	local landCF = pad * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0)
-	local heli, setCF = buildHeli(landCF + V(0, 90, 0))
+	mazeCenter = mazeCenter or (exitOut.Position - exitOut.LookVector * 500)
+
+	-- вертолёт уже ждёт на лесной поляне, винты крутятся
+	local heliCF = pad * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0)
+	local heli, setCF = buildHeli(heliCF)
 	table.insert(temp, heli)
-	local rotorSound = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 1, PlaybackSpeed = 0.6 }, SoundService)
-	rotorSound:Play()
-	subtitle.Text = "Дверь открыта! Свет... и шум винтов!"
-	-- вертолёт садится
-	runFor(5, function(a)
-		local e = smoothstep(a)
-		setCF(landCF + V(0, 90 * (1 - e), 0), 1 / 60)
-		cam.CFrame = CFrame.lookAt(camPos, landCF.Position + V(0, 6 + 30 * (1 - e), 0))
-	end)
-	-- все бегут к вертолёту
-	local avatars = {}
-	for i, who in ipairs(players) do
-		local av = cloneAvatar(who)
-		if av then
-			av.Parent = workspace
-			table.insert(temp, av)
-			table.insert(avatars, { m = av, from = (exitOut * CFrame.new((i - 3) * 2.5, 3, -48)).Position, to = (landCF * CFrame.new((i - 3) * 2, 3.5, 6)).Position })
+	local rotor = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 0.8, PlaybackSpeed = 0.7 }, SoundService)
+	rotor:Play()
+
+	-- друзья идут рядом
+	local friends = {}
+	local k = 0
+	for _, who in ipairs(players) do
+		if who ~= player then
+			k += 1
+			local av = cloneAvatar(who)
+			if av then
+				av.Parent = workspace
+				table.insert(temp, av)
+				table.insert(friends, { m = av, side = (k % 2 == 1) and -4 or 4, back = 3 + math.floor((k - 1) / 2) * 4 })
+			end
 		end
 	end
-	subtitle.Text = "БЕГИТЕ!"
-	runFor(3.5, function(a)
-		local e = smoothstep(a)
-		for _, av in ipairs(avatars) do
-			local pos = av.from:Lerp(av.to, e) + V(0, math.abs(math.sin(a * 30)) * 0.4, 0)
-			av.m:PivotTo(CFrame.lookAt(pos, av.to + V(0, 0, 0.01)))
+
+	-- 1. ворота поднимаются
+	local start = exitOut * CFrame.new(0, 5.4, -40)
+	subtitle.Text = "Ворота поднимаются... За ними — свет."
+	runFor(4.5, function()
+		cam.CFrame = start * CFrame.Angles(math.noise(os.clock() * 3) * 0.01, 0, 0)
+		setCF(heliCF, 1 / 60)
+	end)
+
+	-- 2. идём от первого лица: покачивание камеры и хруст травы под ногами
+	subtitle.Text = "Лес... Настоящий лес. Мы выбрались!"
+	local target = pad * CFrame.new(0, 5.4, 16)
+	local from, to = start.Position, target.Position
+	local walkTime = 8
+	local nextStep = 0
+	local t0 = os.clock()
+	runFor(walkTime, function(a)
+		local t = os.clock() - t0
+		local pos = from:Lerp(to, a)
+		local bob = math.sin(t * 9) * 0.22
+		local sideBob = math.cos(t * 4.5) * 0.12
+		local look = pos + (to - from).Unit * 10 + V(math.sin(t * 0.7) * 2.5, -0.8, 0)
+		cam.CFrame = CFrame.lookAt(pos + V(sideBob, bob, 0), look) * CFrame.Angles(0, 0, math.cos(t * 4.5) * 0.012)
+		if t >= nextStep then
+			nextStep = t + 0.48
+			sound(Config.Sounds.Step, 0.35, 0.7 + math.random() * 0.15)
 		end
-		setCF(landCF, 1 / 60)
-		cam.CFrame = CFrame.lookAt(camPos, landCF.Position + V(0, 4, 0))
+		for _, f in ipairs(friends) do
+			local fp = from:Lerp(to, math.max(0, a - 0.04)) + (exitOut.RightVector * f.side) + exitOut.LookVector * f.back - V(0, 2.4, 0) + V(0, math.abs(math.sin(t * 9)) * 0.3, 0)
+			f.m:PivotTo(CFrame.lookAt(fp, fp - exitOut.LookVector))
+		end
+		setCF(heliCF, 1 / 60)
 	end)
-	for _, av in ipairs(avatars) do
-		av.m:Destroy()
-	end
-	-- взлёт и полёт над лабиринтом
-	subtitle.Text = "Мы улетаем!"
-	runFor(6, function(a)
-		local e = a * a
-		local c = landCF * CFrame.new(0, 8 + 110 * e, -260 * e) * CFrame.Angles(-0.25 * math.min(1, a * 3), 0, 0)
-		setCF(c, 1 / 60)
-		cam.CFrame = CFrame.lookAt(camPos + V(0, 20 * a, 0), c.Position)
-	end)
-	rotorSound:Destroy()
-	for _, d in ipairs(temp) do
-		d:Destroy()
-	end
+
+	-- 3. садимся в вертолёт
+	subtitle.Text = "Залезаем!"
 	fade.BackgroundColor3 = RGB(0, 0, 0)
+	TweenService:Create(fade, TweenInfo.new(0.4), { BackgroundTransparency = 0 }):Play()
+	task.wait(0.45)
+	for _, f in ipairs(friends) do
+		f.m:Destroy()
+	end
+	local seat = CFrame.new(0, 5.6, 2)
+	cam.CFrame = heliCF * seat * CFrame.Angles(0, math.pi / 2, 0)
+	TweenService:Create(fade, TweenInfo.new(0.6), { BackgroundTransparency = 1 }):Play()
+
+	-- 4. взлёт: поднимаемся высоко над лабиринтом и смотрим на него целиком
+	subtitle.Text = "Взлетаем... Вот он — весь лабиринт."
+	local liftTime = 10
+	local high = heliCF.Position:Lerp(mazeCenter, 0.35) + V(0, 420, 0)
+	runFor(liftTime, function(a)
+		local e = a * a * (3 - 2 * a)
+		local pos = heliCF.Position:Lerp(high, e)
+		local hc = CFrame.lookAt(pos, pos + (mazeCenter - heliCF.Position) * V(1, 0, 1)) * CFrame.Angles(-0.12 * math.sin(a * math.pi), 0, 0)
+		setCF(hc, 1 / 60)
+		local eye = hc.Position + V(0, 6, 0)
+		cam.CFrame = CFrame.lookAt(eye, mazeCenter:Lerp(eye, 0.05) - V(0, 0, 0)) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
+	end)
+	task.wait(2.5)
+
+	-- 5. улетаем
+	subtitle.Text = "Прощай, лабиринт."
+	local away = (high - mazeCenter) * V(1, 0, 1)
+	away = away.Magnitude > 1 and away.Unit or V(1, 0, 0)
+	runFor(5, function(a)
+		local pos = high + away * 600 * a * a + V(0, 60 * a, 0)
+		local hc = CFrame.lookAt(pos, pos + away)
+		setCF(hc, 1 / 60)
+		cam.CFrame = CFrame.lookAt(pos + V(0, 6, 0) - away * 2, mazeCenter)
+	end)
+	rotor:Destroy()
+	for _, d in ipairs(temp) do
+		if d.Parent then
+			d:Destroy()
+		end
+	end
 	TweenService:Create(fade, TweenInfo.new(1.2), { BackgroundTransparency = 0 }):Play()
 	task.wait(1.3)
 	subtitle.Text = ""

@@ -844,7 +844,7 @@ local function connectSessionPrompts(s)
 				gain("key", 1)
 				gain("crystal", 3)
 				gain("iron", 5)
-				notifySession(s, p.DisplayName .. " нашёл КЛЮЧ ЛАБИРИНТА! Теперь найдите выход!")
+				notifySession(s, p.DisplayName .. " нашёл КЛЮЧ-КАРТУ! Найдите выход и вставьте её в считыватель.")
 			else
 				local depth = c.model:GetAttribute("Depth") or 5
 				local pool = { { "wood", 4, 8 }, { "stone", 4, 8 }, { "berry", 2, 4 }, { "fiber", 2, 4 }, { "bandage", 1, 2 } }
@@ -883,12 +883,18 @@ local function connectSessionPrompts(s)
 				end
 			end
 			if not hasKey then
-				notify(p, "Заперто. Нужен Ключ Лабиринта — он в золотом сундуке в самом дальнем тупике (над ним светится ключ).")
+				notify(p, "Нужна ключ-карта — она в золотом сундуке в самом дальнем тупике (над ним светится ключ).")
 				return
 			end
 			s.won = true
 			clearMonsters(s, true)
-			TweenService:Create(s.maze.exitDoor, TweenInfo.new(3), { CFrame = s.maze.exitDoor.CFrame + V(0, World.HALF, 0) }):Play()
+			if s.maze.readerLight then
+				s.maze.readerLight.Color = Color3.fromRGB(60, 255, 90)
+			end
+			notifySession(s, p.DisplayName .. " вставил ключ-карту! Ворота открываются...")
+			task.delay(1, function()
+				TweenService:Create(s.maze.exitDoor, TweenInfo.new(4, Enum.EasingStyle.Sine), { CFrame = s.maze.exitDoor.CFrame + V(0, 60, 0) }):Play()
+			end)
 			local coins = Config.CoinsEscape * s.diff.Coins
 			for _, q in ipairs(s.players) do
 				addCoins(q, coins)
@@ -896,9 +902,9 @@ local function connectSessionPrompts(s)
 				if hrp then
 					hrp.Anchored = true
 				end
-				R.Outro:FireClient(q, s.maze.helipad, s.maze.exitOut, s.players, s.day, coins)
+				R.Outro:FireClient(q, s.maze.helipad, s.maze.exitOut, s.players, s.day, coins, s.O)
 			end
-			task.delay(20, function()
+			task.delay(32, function()
 				endSession(s)
 			end)
 		end)

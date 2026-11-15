@@ -763,61 +763,111 @@ local function buildHeli(cf)
 	return m, setCF
 end
 
-remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins)
+remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins, mazeCenter)
 	cutscene = true
 	craft.Visible = false
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Scriptable
 	local temp = {}
-	local camPos = (exitOut * CFrame.new(10, 10, -8)).Position
-	local landCF = pad * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0)
-	local heli, setCF = buildHeli(landCF + V(0, 90, 0))
+	mazeCenter = mazeCenter or (exitOut.Position - exitOut.LookVector * 500)
+
+	-- вертолёт уже ждёт на лесной поляне, винты крутятся
+	local heliCF = pad * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0)
+	local heli, setCF = buildHeli(heliCF)
 	table.insert(temp, heli)
-	local rotorSound = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 1, PlaybackSpeed = 0.6 }, SoundService)
-	rotorSound:Play()
-	subtitle.Text = "Дверь открыта! Свет... и шум винтов!"
-	-- вертолёт садится
-	runFor(5, function(a)
-		local e = smoothstep(a)
-		setCF(landCF + V(0, 90 * (1 - e), 0), 1 / 60)
-		cam.CFrame = CFrame.lookAt(camPos, landCF.Position + V(0, 6 + 30 * (1 - e), 0))
-	end)
-	-- все бегут к вертолёту
-	local avatars = {}
-	for i, who in ipairs(players) do
-		local av = cloneAvatar(who)
-		if av then
-			av.Parent = workspace
-			table.insert(temp, av)
-			table.insert(avatars, { m = av, from = (exitOut * CFrame.new((i - 3) * 2.5, 3, -48)).Position, to = (landCF * CFrame.new((i - 3) * 2, 3.5, 6)).Position })
+	local rotor = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 0.8, PlaybackSpeed = 0.7 }, SoundService)
+	rotor:Play()
+
+	-- друзья идут рядом
+	local friends = {}
+	local k = 0
+	for _, who in ipairs(players) do
+		if who ~= player then
+			k += 1
+			local av = cloneAvatar(who)
+			if av then
+				av.Parent = workspace
+				table.insert(temp, av)
+				table.insert(friends, { m = av, side = (k % 2 == 1) and -4 or 4, back = 3 + math.floor((k - 1) / 2) * 4 })
+			end
 		end
 	end
-	subtitle.Text = "БЕГИТЕ!"
-	runFor(3.5, function(a)
-		local e = smoothstep(a)
-		for _, av in ipairs(avatars) do
-			local pos = av.from:Lerp(av.to, e) + V(0, math.abs(math.sin(a * 30)) * 0.4, 0)
-			av.m:PivotTo(CFrame.lookAt(pos, av.to + V(0, 0, 0.01)))
+
+	-- 1. ворота поднимаются
+	local start = exitOut * CFrame.new(0, 5.4, -40)
+	subtitle.Text = "Ворота поднимаются... За ними — свет."
+	runFor(4.5, function()
+		cam.CFrame = start * CFrame.Angles(math.noise(os.clock() * 3) * 0.01, 0, 0)
+		setCF(heliCF, 1 / 60)
+	end)
+
+	-- 2. идём от первого лица: покачивание камеры и хруст травы под ногами
+	subtitle.Text = "Лес... Настоящий лес. Мы выбрались!"
+	local target = pad * CFrame.new(0, 5.4, 16)
+	local from, to = start.Position, target.Position
+	local walkTime = 8
+	local nextStep = 0
+	local t0 = os.clock()
+	runFor(walkTime, function(a)
+		local t = os.clock() - t0
+		local pos = from:Lerp(to, a)
+		local bob = math.sin(t * 9) * 0.22
+		local sideBob = math.cos(t * 4.5) * 0.12
+		local look = pos + (to - from).Unit * 10 + V(math.sin(t * 0.7) * 2.5, -0.8, 0)
+		cam.CFrame = CFrame.lookAt(pos + V(sideBob, bob, 0), look) * CFrame.Angles(0, 0, math.cos(t * 4.5) * 0.012)
+		if t >= nextStep then
+			nextStep = t + 0.48
+			sound(Config.Sounds.Step, 0.35, 0.7 + math.random() * 0.15)
 		end
-		setCF(landCF, 1 / 60)
-		cam.CFrame = CFrame.lookAt(camPos, landCF.Position + V(0, 4, 0))
+		for _, f in ipairs(friends) do
+			local fp = from:Lerp(to, math.max(0, a - 0.04)) + (exitOut.RightVector * f.side) + exitOut.LookVector * f.back - V(0, 2.4, 0) + V(0, math.abs(math.sin(t * 9)) * 0.3, 0)
+			f.m:PivotTo(CFrame.lookAt(fp, fp - exitOut.LookVector))
+		end
+		setCF(heliCF, 1 / 60)
 	end)
-	for _, av in ipairs(avatars) do
-		av.m:Destroy()
-	end
-	-- взлёт и полёт над лабиринтом
-	subtitle.Text = "Мы улетаем!"
-	runFor(6, function(a)
-		local e = a * a
-		local c = landCF * CFrame.new(0, 8 + 110 * e, -260 * e) * CFrame.Angles(-0.25 * math.min(1, a * 3), 0, 0)
-		setCF(c, 1 / 60)
-		cam.CFrame = CFrame.lookAt(camPos + V(0, 20 * a, 0), c.Position)
-	end)
-	rotorSound:Destroy()
-	for _, d in ipairs(temp) do
-		d:Destroy()
-	end
+
+	-- 3. садимся в вертолёт
+	subtitle.Text = "Залезаем!"
 	fade.BackgroundColor3 = RGB(0, 0, 0)
+	TweenService:Create(fade, TweenInfo.new(0.4), { BackgroundTransparency = 0 }):Play()
+	task.wait(0.45)
+	for _, f in ipairs(friends) do
+		f.m:Destroy()
+	end
+	local seat = CFrame.new(0, 5.6, 2)
+	cam.CFrame = heliCF * seat * CFrame.Angles(0, math.pi / 2, 0)
+	TweenService:Create(fade, TweenInfo.new(0.6), { BackgroundTransparency = 1 }):Play()
+
+	-- 4. взлёт: поднимаемся высоко над лабиринтом и смотрим на него целиком
+	subtitle.Text = "Взлетаем... Вот он — весь лабиринт."
+	local liftTime = 10
+	local high = heliCF.Position:Lerp(mazeCenter, 0.35) + V(0, 420, 0)
+	runFor(liftTime, function(a)
+		local e = a * a * (3 - 2 * a)
+		local pos = heliCF.Position:Lerp(high, e)
+		local hc = CFrame.lookAt(pos, pos + (mazeCenter - heliCF.Position) * V(1, 0, 1)) * CFrame.Angles(-0.12 * math.sin(a * math.pi), 0, 0)
+		setCF(hc, 1 / 60)
+		local eye = hc.Position + V(0, 6, 0)
+		cam.CFrame = CFrame.lookAt(eye, mazeCenter:Lerp(eye, 0.05) - V(0, 0, 0)) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
+	end)
+	task.wait(2.5)
+
+	-- 5. улетаем
+	subtitle.Text = "Прощай, лабиринт."
+	local away = (high - mazeCenter) * V(1, 0, 1)
+	away = away.Magnitude > 1 and away.Unit or V(1, 0, 0)
+	runFor(5, function(a)
+		local pos = high + away * 600 * a * a + V(0, 60 * a, 0)
+		local hc = CFrame.lookAt(pos, pos + away)
+		setCF(hc, 1 / 60)
+		cam.CFrame = CFrame.lookAt(pos + V(0, 6, 0) - away * 2, mazeCenter)
+	end)
+	rotor:Destroy()
+	for _, d in ipairs(temp) do
+		if d.Parent then
+			d:Destroy()
+		end
+	end
 	TweenService:Create(fade, TweenInfo.new(1.2), { BackgroundTransparency = 0 }):Play()
 	task.wait(1.3)
 	subtitle.Text = ""

@@ -11,7 +11,7 @@ Items.Resources = {
 	fang = { Name = "Клык Скрежетника", Order = 6 },
 	berry = { Name = "Ягоды (H — съесть)", Order = 7 },
 	bandage = { Name = "Бинт (поднять друга)", Order = 8 },
-	key = { Name = "КЛЮЧ ЛАБИРИНТА", Order = 9 },
+	key = { Name = "КЛЮЧ-КАРТА ВЫХОДА", Order = 9 },
 }
 
 -- Kind: pickaxe / axe / sword / spear / torch. Tier — что может добывать.
