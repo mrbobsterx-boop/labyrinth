@@ -8,51 +8,68 @@ Config.GameTitle = "ЛАБИРИНТ"
 Config.DevTools = true
 
 Config.Maze = {
-	Cells = 21, -- лабиринт 21 x 21 клеток (нечётное число)
-	CellSize = 24, -- ширина коридора
-	WallHeight = 34,
-	WallThickness = 3,
-	ClearingCells = 5, -- поляна в центре 5 x 5 клеток
-	ExtraOpenings = 0.08, -- доля лишних проходов, чтобы было несколько путей
-	Mines = 4,
-	Chests = 14,
+	Cells = 29, -- лабиринт 29 x 29 клеток (нечётное число)
+	CellSize = 32, -- ширина коридора
+	WallHeight = 56,
+	WallThickness = 4,
+	ClearingCells = 7, -- поляна в центре 7 x 7 клеток (224 x 224)
+	ExtraOpenings = 0.07,
+	Mines = 6,
+	Chests = 22,
+	Cracks = 26, -- узкие щели в стенах (пролезть можно только пригнувшись)
 }
+Config.GateWidth = 32
+Config.SlotSpacing = 3000 -- у каждой группы свой лабиринт, далеко друг от друга
 
--- Цикл дня и ночи (секунды)
-Config.DayLength = 300
-Config.NightLength = 150
-Config.WarningTime = 30 -- за сколько секунд до заката предупреждать
+-- Сложность: выбирается лифтом в лобби
+Config.Difficulty = {
+	easy = { Name = "ЛЕГКО", Color = { 90, 200, 110 }, Day = 360, Night = 120, Monsters = 2, PerPlayer = 0.5, Damage = 14, Speed = 17, Health = 200, Coins = 1 },
+	normal = { Name = "ОБЫЧНО", Color = { 230, 190, 70 }, Day = 300, Night = 150, Monsters = 4, PerPlayer = 1, Damage = 22, Speed = 19, Health = 260, Coins = 2 },
+	hard = { Name = "ТЯЖЕЛО", Color = { 220, 70, 60 }, Day = 240, Night = 180, Monsters = 7, PerPlayer = 1.5, Damage = 30, Speed = 21, Health = 340, Coins = 3 },
+}
+Config.WarningTime = 30
 
 -- Игрок
 Config.WalkSpeed = 16
 Config.SprintSpeed = 24
+Config.CrouchSpeed = 7
 Config.StaminaMax = 100
 Config.StaminaDrain = 22
 Config.StaminaRegen = 14
 Config.BerryHeal = 20
+Config.DownedTime = 45 -- сколько секунд раненый ждёт помощи
+Config.ReviveHealth = 40
 
--- Скрежетники — ночные монстры лабиринта
+-- Монеты: за каждый прожитый день и за побег (умножаются на сложность)
+Config.CoinsPerDay = 10
+Config.CoinsEscape = 100
+
+-- Классы у торговца в лобби
+Config.Classes = {
+	{ Id = "none", Name = "Без класса", Price = 0, Desc = "Обычный выживший." },
+	{ Id = "runner", Name = "Бегун", Price = 100, Desc = "+30% скорость бега, +60 выносливости." },
+	{ Id = "lumber", Name = "Лесоруб", Price = 120, Desc = "Начинает с каменным топором. Дерева в 2 раза больше." },
+	{ Id = "miner", Name = "Шахтёр", Price = 150, Desc = "Начинает с каменной киркой. Добыча руды +50%." },
+	{ Id = "warrior", Name = "Воин", Price = 250, Desc = "+40 здоровья. Начинает с копьём." },
+}
+
+-- Скрежетники — ночные монстры лабиринта (урон, скорость, здоровье — из сложности)
 Config.Monster = {
 	Name = "Скрежетник",
-	Health = 260,
-	Damage = 22,
 	AttackCooldown = 1.3,
-	AttackRange = 6.5,
-	ChaseSpeed = 19,
+	AttackRange = 7,
 	PatrolSpeed = 10,
-	SightRange = 90,
-	HearRange = 30,
-	BaseCount = 5, -- сколько выходит ночью
-	PerPlayer = 1, -- + столько за каждого игрока
+	SightRange = 110,
+	HearRange = 35,
 }
 
 Config.Elevator = {
-	Countdown = 10, -- отсчёт в лобби, пока игроки заходят в лифт
-	RideTime = 9, -- сколько едет лифт
-	MaxPlayers = 8,
+	Countdown = 15,
+	RideTime = 9,
+	MaxPlayers = 5,
 }
 
-Config.NodeRespawn = 90 -- через сколько секунд вырастают деревья и руда
+Config.NodeRespawn = 90
 
 Config.Sounds = {
 	Hit = "rbxasset://sounds/action_jump_land.mp3",
@@ -65,10 +82,8 @@ Config.Sounds = {
 }
 
 Config.Animations = {
-	Idle = "rbxassetid://507766388",
 	Walk = "rbxassetid://507777826",
 	Run = "rbxassetid://507767714",
-	R6Walk = "rbxassetid://180426354",
 }
 
 return Config

@@ -125,10 +125,14 @@ local function decorate(model)
 	end
 end
 
--- opts: parent, spawn (CFrame), patrol ({Vector3}), getPlayers(), inSafeZone(pos) -> bool
+-- opts: parent, spawn (CFrame), patrol ({Vector3}), getPlayers(), inSafeZone(pos) -> bool,
+-- damage(player, amount), health, speed, dmg
 function Monster.new(opts)
 	local self = setmetatable({}, Monster)
 	self.opts = opts
+	self.maxHealth = opts.health or 260
+	self.chaseSpeed = opts.speed or 19
+	self.dmg = opts.dmg or 22
 	self.alive = true
 	self.state = "patrol"
 	self.lastAttack = 0
@@ -143,11 +147,11 @@ function Monster.new(opts)
 	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
 	hum.BreakJointsOnDeath = false
-	hum.MaxHealth = S.Health
-	hum.Health = S.Health
+	hum.MaxHealth = self.maxHealth
+	hum.Health = self.maxHealth
 	hum.WalkSpeed = S.PatrolSpeed
-	model:SetAttribute("MaxHP", S.Health)
-	model:SetAttribute("HP", S.Health)
+	model:SetAttribute("MaxHP", self.maxHealth)
+	model:SetAttribute("HP", self.maxHealth)
 	model:PivotTo(opts.spawn)
 	model.Parent = opts.parent
 	CollectionService:AddTag(model, "Monster")
@@ -256,7 +260,7 @@ function Monster:Think()
 		local char = p.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if hrp and hum and hum.Health > 0 and p:GetAttribute("DevGhost") ~= true and not self.opts.inSafeZone(hrp.Position) then
+		if hrp and hum and hum.Health > 0 and p:GetAttribute("DevGhost") ~= true and p:GetAttribute("Downed") ~= true and not self.opts.inSafeZone(hrp.Position) then
 			local d = (hrp.Position - self.root.Position).Magnitude
 			local sees = d < S.SightRange and self:LineOfSight(self.head.Position, hrp.Position, char)
 			local hears = d < S.HearRange and hrp.AssemblyLinearVelocity.Magnitude > 18
@@ -277,11 +281,11 @@ function Monster:Think()
 
 	if self.state == "chase" and self.target and self.target.Character then
 		local hrp = self.target.Character:FindFirstChild("HumanoidRootPart")
-		if not hrp or self.opts.inSafeZone(hrp.Position) then
+		if not hrp or self.opts.inSafeZone(hrp.Position) or self.target:GetAttribute("Downed") == true then
 			self.state = "patrol"
 			return
 		end
-		self.humanoid.WalkSpeed = S.ChaseSpeed
+		self.humanoid.WalkSpeed = self.chaseSpeed
 		local d = (hrp.Position - self.root.Position).Magnitude
 		if d < S.AttackRange and now - self.lastAttack > S.AttackCooldown then
 			self.lastAttack = now
@@ -319,10 +323,7 @@ function Monster:Attack(player)
 	if look.Magnitude > 0.1 then
 		self.model:PivotTo(CFrame.lookAt(root.Position, root.Position + look))
 	end
-	hum:TakeDamage(S.Damage)
-	if self.opts.onHit then
-		self.opts.onHit(player, self)
-	end
+	self.opts.damage(player, self.dmg)
 end
 
 function Monster:TakeDamage(amount, fromPos)

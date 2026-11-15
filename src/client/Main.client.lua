@@ -126,6 +126,7 @@ local targetHP = make("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = U
 local targetHPFill = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(220, 50, 40), BorderSizePixel = 0 }, targetHP)
 local spread = 0
 
+local lastSwingAnim = 0
 local function hitMarker(kind)
 	local c = kind == "kill" and RGB(255, 60, 60) or (kind == "monster" and RGB(255, 200, 200) or RGB(255, 220, 120))
 	for _, f in ipairs(hitX) do
@@ -318,7 +319,15 @@ remote("Hurt").OnClientEvent:Connect(function()
 	shake(0.7)
 	sound(Config.Sounds.Hurt, 0.7, 1.1)
 end)
-remote("HitMarker").OnClientEvent:Connect(hitMarker)
+remote("HitMarker").OnClientEvent:Connect(function(kind, toolKind)
+	-- добыча на E: руки сами делают удар нужным инструментом
+	if toolKind and os.clock() - lastSwingAnim > 0.3 then
+		lastSwingAnim = os.clock()
+		Viewmodel.swing(toolKind)
+		sound(Config.Sounds.Swing, 0.5, 1)
+	end
+	hitMarker(kind)
+end)
 
 ------------------------------------------------------------------
 -- Верстак
@@ -350,16 +359,24 @@ local function costText(cost)
 	return table.concat(parts, "   ")
 end
 
+local benchLevel = nil -- nil — крафт из инвентаря (C), число — открыт верстак этого уровня
 local function renderCraft()
-	local level = ReplicatedStorage:GetAttribute("WorkbenchLevel") or 1
-	craftTitle.Text = "ВЕРСТАК · уровень " .. level
+	craftTitle.Text = benchLevel and ("ВЕРСТАК · уровень " .. benchLevel) or "КРАФТ (C) · подойди к верстаку для оружия"
 	for _, c in ipairs(list:GetChildren()) do
 		if c:IsA("Frame") then
 			c:Destroy()
 		end
 	end
 	for i, r in ipairs(Items.Recipes) do
-		local locked = r.Level > level
+		local lockText
+		if r.Station == "bench" then
+			if not benchLevel then
+				lockText = "нужен верстак"
+			elseif r.Level > benchLevel then
+				lockText = "нужен ур. " .. r.Level
+			end
+		end
+		local locked = lockText ~= nil
 		local row = make("Frame", { Size = UDim2.new(1, -8, 0, 58), BackgroundColor3 = locked and RGB(30, 28, 26) or RGB(45, 40, 32), LayoutOrder = i, ZIndex = 10 }, list)
 		corner(row, 8)
 		make("TextLabel", {
@@ -370,7 +387,7 @@ local function renderCraft()
 			TextSize = 16,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextColor3 = locked and RGB(130, 120, 110) or RGB(245, 235, 210),
-			Text = (r.Name or Items.toolName(r.Id)) .. (locked and ("  · нужен ур. " .. r.Level) or ""),
+			Text = (r.Name or Items.toolName(r.Id)) .. (locked and ("  · " .. lockText) or ""),
 			ZIndex = 10,
 		}, row)
 		make("TextLabel", {
@@ -401,15 +418,29 @@ local function renderCraft()
 			if not locked then
 				remote("Craft"):FireServer(r.Id)
 				sound(Config.Sounds.Click, 0.6, 1)
-				task.delay(0.3, renderCraft)
+				if r.Id == "workbench" then
+					craft.Visible = false
+				else
+					task.delay(0.3, renderCraft)
+				end
 			end
 		end)
 	end
 end
-remote("OpenCraft").OnClientEvent:Connect(function()
+remote("OpenCraft").OnClientEvent:Connect(function(level)
+	benchLevel = level
 	renderCraft()
 	craft.Visible = true
 end)
+local function openHandCraft()
+	if craft.Visible then
+		craft.Visible = false
+		return
+	end
+	benchLevel = nil
+	renderCraft()
+	craft.Visible = true
+end
 
 ------------------------------------------------------------------
 -- Ввод: удар, предметы 1–9, еда, бег
@@ -432,6 +463,9 @@ local function doSwing()
 		return
 	end
 	local def = Items.Tools[equipped or "fists"] or Items.Tools.fists
+	if def.Kind == "torch" or player:GetAttribute("Downed") then
+		return -- факелом не бьют: он только светит
+	end
 	if os.clock() - lastSwing < 0.42 then
 		return
 	end
@@ -449,6 +483,17 @@ local function doSwing()
 end
 
 local sprintHeld = false
+local flyingNow = false
+local crouched = false
+local function setCrouch(on)
+	crouched = on
+	remote("Crouch"):FireServer(on)
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		TweenService:Create(hum, TweenInfo.new(0.25), { CameraOffset = on and Vector3.new(0, -2.4, 0) or Vector3.zero }):Play()
+	end
+end
 UserInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.LeftShift then
 		sprintHeld = true
@@ -460,6 +505,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		doSwing()
 	elseif input.KeyCode == Enum.KeyCode.H then
 		remote("Eat"):FireServer()
+	elseif input.KeyCode == Enum.KeyCode.C and inMatch() and not cutscene then
+		openHandCraft()
+	elseif input.KeyCode == Enum.KeyCode.LeftControl and inMatch() and not cutscene and not flyingNow then
+		setCrouch(not crouched)
 	elseif input.KeyCode == Enum.KeyCode.Q then
 		equip(nil)
 		refreshHotbar()
@@ -511,7 +560,7 @@ local function cloneAvatar(who)
 	return c
 end
 
-remote("PlayElevator").OnClientEvent:Connect(function(riders, duration)
+remote("PlayElevator").OnClientEvent:Connect(function(riders, duration, diffId)
 	cutscene = true
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Scriptable
@@ -563,7 +612,8 @@ remote("PlayElevator").OnClientEvent:Connect(function(riders, duration)
 	end
 	fade.BackgroundTransparency = 0
 	TweenService:Create(fade, TweenInfo.new(1), { BackgroundTransparency = 1 }):Play()
-	subtitle.Text = #riders > 1 and ("Вас " .. #riders .. ". Лифт поднимается... Куда?") or "Лифт поднимается... Куда?"
+	local diff = Config.Difficulty[diffId or "normal"]
+	subtitle.Text = (diff and ("[" .. diff.Name .. "]  ") or "") .. (#riders > 1 and ("Вас " .. #riders .. ". Лифт поднимается... Куда?") or "Лифт поднимается... Куда?")
 	local rumble = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 0.8, PlaybackSpeed = 0.3 }, SoundService)
 	rumble:Play()
 	local t0 = os.clock()
@@ -589,50 +639,379 @@ remote("PlayElevator").OnClientEvent:Connect(function(riders, duration)
 	conn:Disconnect()
 	rumble:Destroy()
 	m:Destroy()
+	subtitle.Text = ""
+	-- экран остаётся белым, пока сервер строит лабиринт; дальше — ролик прибытия
+	task.delay(25, function()
+		if cutscene and not inMatch() then
+			cutscene = false
+			cam.CameraType = Enum.CameraType.Custom
+			TweenService:Create(fade, TweenInfo.new(1), { BackgroundTransparency = 1 }):Play()
+		end
+	end)
+end)
+
+------------------------------------------------------------------
+-- Прибытие: решётка лифта поднимается, выходишь и осматриваешься
+------------------------------------------------------------------
+local function smoothstep(a)
+	return a * a * (3 - 2 * a)
+end
+local function runFor(duration, fn)
+	local t0 = os.clock()
+	while true do
+		local a = math.clamp((os.clock() - t0) / duration, 0, 1)
+		fn(a)
+		if a >= 1 then
+			break
+		end
+		RunService.RenderStepped:Wait()
+	end
+end
+
+remote("Arrive").OnClientEvent:Connect(function(liftPos, riders)
+	cutscene = true
+	local cam = workspace.CurrentCamera
+	cam.CameraType = Enum.CameraType.Scriptable
+	local eye0 = liftPos + V(0, 5.6, 4)
+	local eye1 = liftPos + V(0, 5.8, -16)
+	cam.CFrame = CFrame.lookAt(eye0, eye0 + V(0, 0, -10))
+	TweenService:Create(fade, TweenInfo.new(1.6), { BackgroundTransparency = 1 }):Play()
+	task.delay(1.6, function()
+		fade.BackgroundColor3 = RGB(0, 0, 0)
+	end)
+	subtitle.Text = #riders > 1 and ("Вас " .. #riders .. ". Решётка поднимается...") or "Решётка поднимается..."
+	shake(0.5)
+	runFor(1.6, function()
+		cam.CFrame = CFrame.lookAt(eye0, eye0 + V(0, 0.4, -10)) * CFrame.Angles(math.noise(os.clock() * 6) * 0.01, 0, 0)
+	end)
+	-- шаг из лифта
+	runFor(2.4, function(a)
+		local e = smoothstep(a)
+		local pos = eye0:Lerp(eye1, e) + V(0, math.abs(math.sin(a * 2.4 * 7)) * 0.15, 0)
+		cam.CFrame = CFrame.lookAt(pos, pos + V(0, 0.6 - e * 0.3, -10))
+	end)
+	subtitle.Text = "Поляна. Лес, река... и огромные стены со всех сторон."
+	-- осматриваемся: налево, вверх на стены, направо, вперёд
+	local function lookAt(yaw, pitch)
+		return CFrame.new(eye1) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(pitch, 0, 0)
+	end
+	local keys = { { 0, 0.03 }, { 0.95, 0.12 }, { 0.6, 0.45 }, { -0.95, 0.15 }, { 0, 0.02 } }
+	for k = 1, #keys - 1 do
+		local a0, a1 = keys[k], keys[k + 1]
+		runFor(1.3, function(a)
+			local e = smoothstep(a)
+			cam.CFrame = lookAt(a0[1] + (a1[1] - a0[1]) * e, a0[2] + (a1[2] - a0[2]) * e)
+		end)
+	end
+	subtitle.Text = ""
 	cam.CameraType = Enum.CameraType.Custom
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if hum then
 		cam.CameraSubject = hum
 	end
-	TweenService:Create(fade, TweenInfo.new(2), { BackgroundTransparency = 1 }):Play()
-	task.delay(2, function()
-		fade.BackgroundColor3 = RGB(0, 0, 0)
-	end)
-	subtitle.Text = "Поляна. Лес, река... и огромные стены вокруг."
-	task.delay(4, function()
-		subtitle.Text = ""
-	end)
 	cutscene = false
-	shake(0.6)
+	Viewmodel.rebuild()
 	Viewmodel.setItem("fists")
+	notify("Нажми C — крафт. Подойди к дереву и зажми E, чтобы рубить.")
 end)
 
 ------------------------------------------------------------------
--- Победа
+-- Финал: дверь открыта, вертолёт садится и уносит всех из лабиринта
 ------------------------------------------------------------------
-remote("Win").OnClientEvent:Connect(function(who, day)
+local function buildHeli(cf)
+	local m = Instance.new("Model")
+	m.Name = "Helicopter"
+	local function p(size, rel, color, mat, shape)
+		local pt = make("Part", { Anchored = true, CanCollide = false, CanQuery = false, Size = size, Color = color, Material = mat or Enum.Material.SmoothPlastic }, m)
+		if shape then
+			pt.Shape = shape
+		end
+		pt:SetAttribute("Rel", rel)
+		return pt
+	end
+	local body = RGB(40, 60, 45)
+	p(V(9, 7, 14), CFrame.new(0, 4.5, 0), body, Enum.Material.Metal)
+	p(V(8, 4.5, 5), CFrame.new(0, 5.5, -8), RGB(40, 60, 70), Enum.Material.Glass)
+	p(V(2.5, 2.5, 16), CFrame.new(0, 6, 15), body, Enum.Material.Metal)
+	p(V(0.6, 5, 3), CFrame.new(0, 9, 22), body, Enum.Material.Metal)
+	for _, x in ipairs({ -4, 4 }) do
+		p(V(0.6, 0.6, 16), CFrame.new(x, 0.3, 0), RGB(30, 30, 30), Enum.Material.Metal)
+		p(V(0.4, 2, 0.4), CFrame.new(x, 1.3, -4), RGB(30, 30, 30), Enum.Material.Metal)
+		p(V(0.4, 2, 0.4), CFrame.new(x, 1.3, 4), RGB(30, 30, 30), Enum.Material.Metal)
+	end
+	p(V(0.8, 1.5, 0.8), CFrame.new(0, 8.6, 0), RGB(30, 30, 30), Enum.Material.Metal)
+	for k = 0, 1 do
+		local blade = p(V(36, 0.25, 1.4), CFrame.new(0, 9.4, 0), RGB(25, 25, 25), Enum.Material.Metal)
+		blade:SetAttribute("Blade", k * math.pi / 2)
+	end
+	local lamp = p(V(1, 1, 0.4), CFrame.new(0, 3, -10.5), RGB(255, 250, 220), Enum.Material.Neon)
+	make("SpotLight", { Face = Enum.NormalId.Front, Range = 60, Angle = 50, Brightness = 4 }, lamp)
+	m.Parent = workspace
+	local spin = 0
+	local function setCF(c, dt)
+		spin += (dt or 0) * 25
+		for _, d in ipairs(m:GetChildren()) do
+			if d:IsA("BasePart") then
+				local rel = d:GetAttribute("Rel")
+				local b = d:GetAttribute("Blade")
+				d.CFrame = c * rel * (b and CFrame.Angles(0, spin + b, 0) or CFrame.new())
+			end
+		end
+	end
+	setCF(cf)
+	return m, setCF
+end
+
+remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins)
 	cutscene = true
-	fade.BackgroundColor3 = RGB(255, 255, 255)
-	TweenService:Create(fade, TweenInfo.new(2.5), { BackgroundTransparency = 0 }):Play()
-	task.wait(2.5)
+	craft.Visible = false
+	local cam = workspace.CurrentCamera
+	cam.CameraType = Enum.CameraType.Scriptable
+	local temp = {}
+	local camPos = (exitOut * CFrame.new(10, 10, -8)).Position
+	local landCF = pad * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0)
+	local heli, setCF = buildHeli(landCF + V(0, 90, 0))
+	table.insert(temp, heli)
+	local rotorSound = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 1, PlaybackSpeed = 0.6 }, SoundService)
+	rotorSound:Play()
+	subtitle.Text = "Дверь открыта! Свет... и шум винтов!"
+	-- вертолёт садится
+	runFor(5, function(a)
+		local e = smoothstep(a)
+		setCF(landCF + V(0, 90 * (1 - e), 0), 1 / 60)
+		cam.CFrame = CFrame.lookAt(camPos, landCF.Position + V(0, 6 + 30 * (1 - e), 0))
+	end)
+	-- все бегут к вертолёту
+	local avatars = {}
+	for i, who in ipairs(players) do
+		local av = cloneAvatar(who)
+		if av then
+			av.Parent = workspace
+			table.insert(temp, av)
+			table.insert(avatars, { m = av, from = (exitOut * CFrame.new((i - 3) * 2.5, 3, -48)).Position, to = (landCF * CFrame.new((i - 3) * 2, 3.5, 6)).Position })
+		end
+	end
+	subtitle.Text = "БЕГИТЕ!"
+	runFor(3.5, function(a)
+		local e = smoothstep(a)
+		for _, av in ipairs(avatars) do
+			local pos = av.from:Lerp(av.to, e) + V(0, math.abs(math.sin(a * 30)) * 0.4, 0)
+			av.m:PivotTo(CFrame.lookAt(pos, av.to + V(0, 0, 0.01)))
+		end
+		setCF(landCF, 1 / 60)
+		cam.CFrame = CFrame.lookAt(camPos, landCF.Position + V(0, 4, 0))
+	end)
+	for _, av in ipairs(avatars) do
+		av.m:Destroy()
+	end
+	-- взлёт и полёт над лабиринтом
+	subtitle.Text = "Мы улетаем!"
+	runFor(6, function(a)
+		local e = a * a
+		local c = landCF * CFrame.new(0, 8 + 110 * e, -260 * e) * CFrame.Angles(-0.25 * math.min(1, a * 3), 0, 0)
+		setCF(c, 1 / 60)
+		cam.CFrame = CFrame.lookAt(camPos + V(0, 20 * a, 0), c.Position)
+	end)
+	rotorSound:Destroy()
+	for _, d in ipairs(temp) do
+		d:Destroy()
+	end
+	fade.BackgroundColor3 = RGB(0, 0, 0)
+	TweenService:Create(fade, TweenInfo.new(1.2), { BackgroundTransparency = 0 }):Play()
+	task.wait(1.3)
+	subtitle.Text = ""
 	lobbyLabel.ZIndex = 22
-	lobbyLabel.TextColor3 = RGB(30, 40, 30)
-	lobbyLabel.Text = "ВЫ ВЫБРАЛИСЬ ИЗ ЛАБИРИНТА!\n" .. who .. " открыл выход · день " .. day
-	task.wait(6)
+	lobbyLabel.Text = "ВЫ ВЫБРАЛИСЬ ИЗ ЛАБИРИНТА!\nДней в лабиринте: " .. day .. "   ·   +" .. coins .. " монет"
+	task.wait(4)
 	lobbyLabel.Text = ""
-	lobbyLabel.TextColor3 = RGB(240, 230, 200)
 	lobbyLabel.ZIndex = 1
 	TweenService:Create(fade, TweenInfo.new(1.5), { BackgroundTransparency = 1 }):Play()
-	task.delay(1.5, function()
-		fade.BackgroundColor3 = RGB(0, 0, 0)
-	end)
+	cam.CameraType = Enum.CameraType.Custom
 	cutscene = false
 end)
 
 ------------------------------------------------------------------
 -- Каждый кадр: интерфейс, прицел, руки, бег
 ------------------------------------------------------------------
+local devCursorOn = false
+local fullLightOn = false
+local function cursorForced()
+	return devCursorOn
+end
+local function staminaMax()
+	return Config.StaminaMax + (player:GetAttribute("Class") == "runner" and 60 or 0)
+end
+local function className(id)
+	for _, c in ipairs(Config.Classes) do
+		if c.Id == id then
+			return c.Name
+		end
+	end
+	return "Без класса"
+end
+
+-- освещение: у каждой группы своё время суток
+local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
+local cc = Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
+local rays = Lighting:FindFirstChildOfClass("SunRaysEffect")
+local function applyLighting(phase, a)
+	if fullLightOn then
+		return
+	end
+	atmo = atmo or Lighting:FindFirstChildOfClass("Atmosphere")
+	cc = cc or Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
+	rays = rays or Lighting:FindFirstChildOfClass("SunRaysEffect")
+	local clock, night = 14, 0
+	if phase == "day" then
+		clock = 6.5 + a * 11.5
+		night = math.clamp((clock - 16.5) / 2, 0, 1) * 0.5 + math.clamp((7.5 - clock) / 1, 0, 1) * 0.5
+	elseif phase == "night" then
+		clock = (18.2 + a * 12.1) % 24
+		night = 0.5 + 0.5 * math.clamp(math.min(a, 1 - a) / 0.08, 0, 1)
+	end
+	local function mix(x, y)
+		return x:Lerp(y, night)
+	end
+	Lighting.ClockTime = clock
+	Lighting.Brightness = 3 - night * 2.2
+	Lighting.Ambient = mix(RGB(70, 66, 60), RGB(14, 16, 26))
+	Lighting.OutdoorAmbient = mix(RGB(140, 135, 125), RGB(30, 36, 60))
+	if atmo then
+		atmo.Density = 0.3 + night * 0.15
+		atmo.Haze = 1.2 + night * 1.2
+		atmo.Color = mix(RGB(200, 190, 170), RGB(60, 70, 100))
+		atmo.Decay = mix(RGB(110, 100, 90), RGB(20, 22, 40))
+	end
+	if cc then
+		cc.TintColor = mix(RGB(255, 245, 230), RGB(190, 205, 255))
+		cc.Saturation = 0.1 - night * 0.35
+		cc.Contrast = 0.12
+	end
+	if rays then
+		rays.Intensity = 0.12 * (1 - night)
+	end
+end
+
+-- монеты и класс (в лобби)
+local coinsLabel = make("TextLabel", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -220, 0, 16),
+	Size = UDim2.new(0, 360, 0, 32),
+	BackgroundColor3 = RGB(20, 18, 14),
+	BackgroundTransparency = 0.3,
+	Font = UI_FONT,
+	TextSize = 16,
+	TextColor3 = RGB(255, 215, 100),
+	Text = "",
+}, gui)
+corner(coinsLabel, 8)
+
+-- окно лифта
+local liftPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 150), Size = UDim2.new(0, 420, 0, 190), BackgroundColor3 = RGB(18, 20, 22), BackgroundTransparency = 0.15, Visible = false }, gui)
+corner(liftPanel, 12)
+local liftTitle = make("TextLabel", { Position = UDim2.new(0, 14, 0, 8), Size = UDim2.new(1, -28, 0, 34), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 22, TextColor3 = RGB(240, 230, 200), Text = "" }, liftPanel)
+local liftInfo = make("TextLabel", { Position = UDim2.new(0, 14, 0, 42), Size = UDim2.new(1, -28, 0, 24), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 16, TextColor3 = RGB(200, 200, 190), Text = "" }, liftPanel)
+local function liftBtn(text, x, w, fn)
+	local b = make("TextButton", { Position = UDim2.new(0, x, 0, 0), Size = UDim2.new(0, w, 1, 0), BackgroundColor3 = RGB(50, 54, 58), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(240, 240, 240), Text = text }, nil)
+	corner(b, 8)
+	b.MouseButton1Click:Connect(fn)
+	return b
+end
+local hostRow = make("Frame", { Position = UDim2.new(0, 14, 0, 76), Size = UDim2.new(1, -28, 0, 40), BackgroundTransparency = 1 }, liftPanel)
+local friendsB = liftBtn("Только друзья: ВЫКЛ", 0, 180, function()
+	remote("LiftSettings"):FireServer("friends", not player:GetAttribute("LiftFriends"))
+end)
+friendsB.Parent = hostRow
+local minusB = liftBtn("−", 190, 40, function()
+	remote("LiftSettings"):FireServer("max", (player:GetAttribute("LiftMax") or 5) - 1)
+end)
+minusB.Parent = hostRow
+local maxLabel = make("TextLabel", { Position = UDim2.new(0, 232, 0, 0), Size = UDim2.new(0, 120, 1, 0), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextColor3 = RGB(240, 240, 240), Text = "" }, hostRow)
+local plusB = liftBtn("+", 352, 40, function()
+	remote("LiftSettings"):FireServer("max", (player:GetAttribute("LiftMax") or 5) + 1)
+end)
+plusB.Parent = hostRow
+local goB = make("TextButton", { Position = UDim2.new(0, 14, 0, 128), Size = UDim2.new(1, -28, 0, 46), BackgroundColor3 = RGB(60, 120, 60), Font = UI_FONT, TextSize = 18, TextColor3 = RGB(255, 255, 255), Text = "ЕХАТЬ СЕЙЧАС" }, liftPanel)
+corner(goB, 8)
+goB.MouseButton1Click:Connect(function()
+	remote("LiftSettings"):FireServer("go")
+end)
+
+local function updateLiftPanel()
+	local id = player:GetAttribute("LiftId")
+	liftPanel.Visible = id ~= nil and not inMatch() and not cutscene
+	if not liftPanel.Visible then
+		return
+	end
+	local d = Config.Difficulty[id]
+	liftTitle.Text = "ЛИФТ · " .. d.Name
+	liftTitle.TextColor3 = RGB(d.Color[1], d.Color[2], d.Color[3])
+	local cd = player:GetAttribute("LiftCountdown") or -1
+	liftInfo.Text = "Игроков: " .. (player:GetAttribute("LiftCount") or 1) .. "/" .. (player:GetAttribute("LiftMax") or 5) .. "   ·   отправление через " .. math.max(0, cd) .. " с"
+	local host = player:GetAttribute("LiftHost") == true
+	hostRow.Visible = host
+	goB.Visible = host
+	liftPanel.Size = UDim2.new(0, 420, 0, host and 190 or 76)
+	friendsB.Text = player:GetAttribute("LiftFriends") and "Только друзья: ВКЛ" or "Только друзья: ВЫКЛ"
+	maxLabel.Text = "Максимум: " .. (player:GetAttribute("LiftMax") or 5)
+	if not host then
+		liftInfo.Text = liftInfo.Text .. "   ·   хозяин: " .. (player:GetAttribute("LiftHostName") or "")
+	end
+end
+
+-- магазин классов
+local shopPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 560, 0, 470), BackgroundColor3 = RGB(26, 22, 18), Visible = false, ZIndex = 12 }, gui)
+corner(shopPanel, 12)
+make("TextLabel", { Position = UDim2.new(0, 16, 0, 10), Size = UDim2.new(1, -32, 0, 36), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 24, TextColor3 = RGB(255, 210, 90), Text = "ТОРГОВЕЦ КЛАССАМИ", ZIndex = 12 }, shopPanel)
+local shopList = make("Frame", { Position = UDim2.new(0, 14, 0, 54), Size = UDim2.new(1, -28, 1, -116), BackgroundTransparency = 1, ZIndex = 12 }, shopPanel)
+make("UIListLayout", { Padding = UDim.new(0, 6) }, shopList)
+local shopClose = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.new(0, 160, 0, 40), BackgroundColor3 = RGB(90, 40, 30), Font = UI_FONT, TextSize = 18, TextColor3 = RGB(255, 240, 230), Text = "Закрыть", Modal = true, ZIndex = 12 }, shopPanel)
+corner(shopClose, 8)
+shopClose.MouseButton1Click:Connect(function()
+	shopPanel.Visible = false
+end)
+local function renderShop()
+	for _, c in ipairs(shopList:GetChildren()) do
+		if c:IsA("Frame") then
+			c:Destroy()
+		end
+	end
+	local owned = {}
+	pcall(function()
+		owned = HttpService:JSONDecode(player:GetAttribute("OwnedClasses") or "[]")
+	end)
+	for _, c in ipairs(Config.Classes) do
+		local row = make("Frame", { Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = RGB(44, 38, 30), ZIndex = 12 }, shopList)
+		corner(row, 8)
+		make("TextLabel", { Position = UDim2.new(0, 10, 0, 4), Size = UDim2.new(1, -150, 0, 24), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(245, 235, 210), Text = c.Name .. (c.Price > 0 and ("  ·  " .. c.Price .. " 🪙") or ""), ZIndex = 12 }, row)
+		make("TextLabel", { Position = UDim2.new(0, 10, 0, 28), Size = UDim2.new(1, -150, 0, 24), BackgroundTransparency = 1, Font = TEXT_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 180, 160), Text = c.Desc, ZIndex = 12 }, row)
+		local has = table.find(owned, c.Id) ~= nil
+		local current = player:GetAttribute("Class") == c.Id
+		local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.new(0, 120, 0, 38), BackgroundColor3 = current and RGB(80, 80, 80) or (has and RGB(60, 90, 140) or RGB(60, 120, 60)), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(255, 255, 255), Text = current and "Выбран" or (has and "Выбрать" or "Купить"), ZIndex = 12 }, row)
+		corner(b, 6)
+		b.MouseButton1Click:Connect(function()
+			remote("ShopBuy"):FireServer(c.Id)
+			task.delay(0.4, renderShop)
+		end)
+	end
+end
+remote("ShopOpen").OnClientEvent:Connect(function()
+	renderShop()
+	shopPanel.Visible = true
+end)
+
+-- ранение
+local downedPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(90, 0, 0), BackgroundTransparency = 0.6, Visible = false, ZIndex = 6 }, gui)
+local downedText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.new(0.8, 0, 0, 120), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = RGB(255, 230, 220), TextStrokeTransparency = 0.3, Text = "", ZIndex = 6 }, downedPanel)
+
+player.CharacterAdded:Connect(function()
+	task.wait(1)
+	crouched = false
+	Viewmodel.rebuild()
+	Viewmodel.setItem(equipped or "fists", true)
+end)
+
 local stamina = Config.StaminaMax
 local exhausted = false
 local vmState = { visible = false, moving = false, sprinting = false }
@@ -660,24 +1039,46 @@ RunService.RenderStepped:Connect(function(dt)
 	-- лобби
 	titleLabel.Visible = not inMatch() and not cutscene
 	if not inMatch() and not cutscene then
-		local cd = ReplicatedStorage:GetAttribute("LiftCountdown") or -1
-		lobbyLabel.Text = cd >= 0 and ("Лифт отправляется через " .. cd .. "...") or "Зайди в лифт, чтобы отправиться на поляну"
-		lobbyLabel.TextSize = cd >= 0 and 36 or 22
+		lobbyLabel.Text = player:GetAttribute("LiftId") and "" or "Выбери лифт: ЛЕГКО · ОБЫЧНО · ТЯЖЕЛО"
+		lobbyLabel.TextSize = 22
 	elseif not cutscene then
 		lobbyLabel.Text = ""
 	end
+	updateLiftPanel()
+	coinsLabel.Visible = not inMatch()
+	coinsLabel.Text = "🪙 " .. (player:GetAttribute("Coins") or 0) .. "  ·  класс: " .. className(player:GetAttribute("Class"))
 
-	-- фаза дня
+	-- фаза дня (у каждой группы своя)
 	phaseLabel.Visible = inMatch()
-	local phase = ReplicatedStorage:GetAttribute("Phase") or "day"
-	local left = (ReplicatedStorage:GetAttribute("PhaseEnd") or 0) - workspace:GetServerTimeNow()
-	local day = ReplicatedStorage:GetAttribute("Day") or 1
+	local phase = player:GetAttribute("Phase") or "day"
+	local pStart = player:GetAttribute("PhaseStart") or workspace:GetServerTimeNow()
+	local pLen = player:GetAttribute("PhaseLen") or 300
+	local elapsed = workspace:GetServerTimeNow() - pStart
+	local left = pLen - elapsed
+	local day = player:GetAttribute("Day") or 1
+	local diff = Config.Difficulty[player:GetAttribute("Difficulty") or "normal"]
+	local tagText = diff and ("[" .. diff.Name .. "]  ") or ""
 	if phase == "day" then
-		phaseLabel.Text = "☀  День " .. day .. "  ·  врата закроются через " .. formatTime(left)
+		phaseLabel.Text = tagText .. "☀  День " .. day .. "  ·  врата закроются через " .. formatTime(left)
 		phaseLabel.TextColor3 = left < Config.WarningTime and RGB(255, 120, 90) or RGB(240, 230, 200)
 	else
-		phaseLabel.Text = "☾  Ночь  ·  врата закрыты  ·  рассвет через " .. formatTime(left)
+		phaseLabel.Text = tagText .. "☾  Ночь  ·  врата закрыты  ·  рассвет через " .. formatTime(left)
 		phaseLabel.TextColor3 = RGB(170, 190, 255)
+	end
+	applyLighting(inMatch() and phase or nil, math.clamp(elapsed / pLen, 0, 1))
+
+	-- курсор только в меню
+	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or cursorForced()
+
+	-- ранение
+	local downed = player:GetAttribute("Downed") == true
+	downedPanel.Visible = downed and inMatch()
+	if downed then
+		local dl = (player:GetAttribute("DownedEnd") or 0) - workspace:GetServerTimeNow()
+		downedText.Text = "ТЫ РАНЕН\nДруг может поднять тебя бинтом (зажать E рядом с тобой)\nОчнёшься у лифта через " .. formatTime(dl)
+	end
+	if hum and inMatch() then
+		hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
 	end
 
 	-- здоровье и выносливость
@@ -687,18 +1088,26 @@ RunService.RenderStepped:Connect(function(dt)
 		hpFill.Size = UDim2.fromScale(math.clamp(hum.Health / hum.MaxHealth, 0, 1), 1)
 		hpText.Text = math.floor(hum.Health) .. " / " .. hum.MaxHealth
 		local moving = hum.MoveDirection.Magnitude > 0.1
-		local sprinting = playing and sprintHeld and moving and not exhausted and stamina > 0
+		local sprinting = playing and sprintHeld and moving and not exhausted and stamina > 0 and not crouched
 		if sprinting then
 			stamina = math.max(0, stamina - Config.StaminaDrain * dt)
 			exhausted = stamina <= 0
 		else
-			stamina = math.min(Config.StaminaMax, stamina + Config.StaminaRegen * dt)
+			stamina = math.min(staminaMax(), stamina + Config.StaminaRegen * dt)
 			if exhausted and stamina > 30 then
 				exhausted = false
 			end
 		end
-		hum.WalkSpeed = sprinting and Config.SprintSpeed or Config.WalkSpeed
-		stFill.Size = UDim2.fromScale(stamina / Config.StaminaMax, 1)
+		local cls = player:GetAttribute("Class")
+		local sprint = Config.SprintSpeed * (cls == "runner" and 1.3 or 1)
+		if downed then
+			hum.WalkSpeed = 0
+		elseif crouched then
+			hum.WalkSpeed = Config.CrouchSpeed
+		else
+			hum.WalkSpeed = sprinting and sprint or Config.WalkSpeed
+		end
+		stFill.Size = UDim2.fromScale(stamina / staminaMax(), 1)
 		vmState.visible, vmState.moving, vmState.sprinting = playing, moving, sprinting
 		if sprinting then
 			trauma = math.max(trauma, 0.08)
@@ -771,12 +1180,14 @@ if Config.DevTools then
 	local unlocker = make("TextButton", { Size = UDim2.new(0, 1, 0, 1), BackgroundTransparency = 1, Text = "", Modal = true, Visible = false }, gui)
 	local cursorB = btn("Курсор: ВЫКЛ (M)", function(b)
 		unlocker.Visible = not unlocker.Visible
+		devCursorOn = unlocker.Visible
 		b.Text = unlocker.Visible and "Курсор: ВКЛ (M)" or "Курсор: ВЫКЛ (M)"
 	end)
 	-- полный свет (L): переписываем свет каждый кадр, т.к. сервер меняет время суток
 	local full = false
 	local fullB = btn("Полный свет: ВЫКЛ (L)", function(b)
 		full = not full
+		fullLightOn = full
 		b.Text = full and "Полный свет: ВКЛ (L)" or "Полный свет: ВЫКЛ (L)"
 	end)
 	RunService.RenderStepped:Connect(function()
@@ -801,6 +1212,7 @@ if Config.DevTools then
 			return
 		end
 		flying = on
+		flyingNow = on
 		remote("Dev"):FireServer("ghost", on)
 		hum.PlatformStand = on
 		if flyConn then
@@ -858,15 +1270,23 @@ if Config.DevTools then
 	btn("Телепорт к выходу", function()
 		remote("Dev"):FireServer("toexit")
 	end)
+	btn("+500 монет", function()
+		remote("Dev"):FireServer("coins")
+	end)
+	btn("Ранить себя (тест)", function()
+		remote("Dev"):FireServer("down")
+	end)
 	UserInputService.InputBegan:Connect(function(input, processed)
 		if processed then
 			return
 		end
 		if input.KeyCode == Enum.KeyCode.M then
 			unlocker.Visible = not unlocker.Visible
+			devCursorOn = unlocker.Visible
 			cursorB.Text = unlocker.Visible and "Курсор: ВКЛ (M)" or "Курсор: ВЫКЛ (M)"
 		elseif input.KeyCode == Enum.KeyCode.L then
 			full = not full
+			fullLightOn = full
 			fullB.Text = full and "Полный свет: ВКЛ (L)" or "Полный свет: ВЫКЛ (L)"
 		elseif input.KeyCode == Enum.KeyCode.N then
 			setFly(not flying)
@@ -879,11 +1299,11 @@ end
 make("TextLabel", {
 	AnchorPoint = Vector2.new(1, 1),
 	Position = UDim2.new(1, -16, 1, -14),
-	Size = UDim2.new(0, 520, 0, 20),
+	Size = UDim2.new(0, 760, 0, 20),
 	BackgroundTransparency = 1,
 	Font = TEXT_FONT,
 	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Right,
 	TextColor3 = RGB(200, 195, 180),
-	Text = "ЛКМ — удар/добыча · 1–9 — предмет · Q — убрать · Shift — бег · H — съесть ягоды · E — действие",
+	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды",
 }, gui)
