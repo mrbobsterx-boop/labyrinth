@@ -1,0 +1,20 @@
+{
+  "name": "Labyrinth",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/shared" },
+      "Remotes": { "$className": "Folder" }
+    },
+    "ServerScriptService": {
+      "Server": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": { "$path": "src/client" }
+      }
+    },
+    "Workspace": { "$properties": { "StreamingEnabled": false } },
+    "Lighting": { "$properties": { "Technology": "Future" } }
+  }
+}
