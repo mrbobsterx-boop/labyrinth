@@ -1,11 +1,9 @@
 -- Скрежетник — ночной монстр лабиринта. Патрулирует, видит и слышит игроков,
 -- гонится, бьёт когтями. Не заходит на поляну.
 
-local Players = game:GetService("Players")
 local PathfindingService = game:GetService("PathfindingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
-local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local S = Config.Monster
@@ -16,113 +14,39 @@ Monster.__index = Monster
 local V = Vector3.new
 local RGB = Color3.fromRGB
 local SKIN = RGB(26, 24, 28)
-local EYE = RGB(140, 255, 120)
 
-local function weld(part, base)
-	local w = Instance.new("WeldConstraint")
-	w.Part0 = base
-	w.Part1 = part
-	w.Parent = part
-end
-
-local function add(model, name, size, cf, color, material, base)
-	local p = Instance.new("Part")
-	p.Name = name
-	p.Size = size
-	p.CFrame = cf
-	p.Color = color
-	p.Material = material or Enum.Material.SmoothPlastic
-	p.CanCollide = false
-	p.Massless = true
-	p.TopSurface = Enum.SurfaceType.Smooth
-	p.BottomSurface = Enum.SurfaceType.Smooth
-	p.Parent = model
-	weld(p, base)
-	return p
-end
-
+-- Сервер держит только «скелет»: невидимый корпус + Humanoid (ходьба и поиск пути).
+-- Само тело (слизень, 8 механических ног, жало) рисует клиент — MonsterView.lua,
+-- поэтому ноги двигаются плавно и не грузят сеть.
 local function buildRig()
-	local ok, rig = pcall(function()
-		local d = Instance.new("HumanoidDescription")
-		d.HeightScale = 1.55
-		d.WidthScale = 1.25
-		d.DepthScale = 1.2
-		d.HeadScale = 1.1
-		d.BodyTypeScale = 0.6
-		d.ProportionScale = 1
-		for _, k in ipairs({ "HeadColor", "TorsoColor", "LeftArmColor", "RightArmColor", "LeftLegColor", "RightLegColor" }) do
-			d[k] = SKIN
-		end
-		return Players:CreateHumanoidModelFromDescription(d, Enum.HumanoidRigType.R15)
-	end)
-	if ok and rig and rig:FindFirstChild("HumanoidRootPart") then
-		return rig, true
-	end
-	-- запасная модель
 	local m = Instance.new("Model")
 	local root = Instance.new("Part")
 	root.Name = "HumanoidRootPart"
-	root.Size = V(3, 3, 1.5)
+	root.Size = V(6, 4, 12)
 	root.Transparency = 1
-	root.CanCollide = false
+	root.CanCollide = true
+	root.Color = SKIN
 	root.Parent = m
 	m.PrimaryPart = root
-	local torso = add(m, "UpperTorso", V(3.4, 4, 1.8), root.CFrame * CFrame.new(0, 1, 0), SKIN, nil, root)
-	torso.CanCollide = true
-	torso.Massless = false
-	add(m, "Head", V(1.8, 1.8, 1.8), root.CFrame * CFrame.new(0, 4, 0), SKIN, nil, root)
-	for _, sx in ipairs({ -1, 1 }) do
-		add(m, "Leg", V(1.2, 4.5, 1.2), root.CFrame * CFrame.new(0.9 * sx, -3.7, 0), SKIN, nil, root)
-		add(m, sx < 0 and "LeftHand" or "RightHand", V(1, 5, 1), root.CFrame * CFrame.new(2.4 * sx, 0.3, 0), SKIN, nil, root)
-	end
+	local head = Instance.new("Part")
+	head.Name = "Head"
+	head.Size = V(2, 2, 2)
+	head.Transparency = 1
+	head.CanCollide = false
+	head.CanQuery = false
+	head.Massless = true
+	head.CFrame = root.CFrame * CFrame.new(0, 1, -6)
+	head.Parent = m
+	local w = Instance.new("WeldConstraint")
+	w.Part0 = root
+	w.Part1 = head
+	w.Parent = head
 	local hum = Instance.new("Humanoid")
 	hum.RigType = Enum.HumanoidRigType.R15
-	hum.HipHeight = 4.5
+	hum.HipHeight = 3.6
+	hum.RequiresNeck = false
 	hum.Parent = m
-	return m, false
-end
-
-local function decorate(model)
-	for _, d in ipairs(model:GetDescendants()) do
-		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("Decal") then
-			d:Destroy()
-		end
-	end
-	local head = model:FindFirstChild("Head")
-	if head then
-		local hs = head.Size
-		-- вытянутая морда и три светящихся глаза
-		add(model, "Snout", V(hs.X * 0.6, hs.Y * 0.45, hs.Z * 0.7), head.CFrame * CFrame.new(0, -hs.Y * 0.2, -hs.Z * 0.6), SKIN, Enum.Material.Slate, head)
-		for k, x in ipairs({ -0.28, 0, 0.28 }) do
-			add(model, "Eye", V(0.18, 0.18, 0.06), head.CFrame * CFrame.new(x * hs.X, hs.Y * 0.12 + (k == 2 and 0.18 or 0), -hs.Z / 2 - 0.03), EYE, Enum.Material.Neon, head)
-		end
-		local glow = Instance.new("PointLight")
-		glow.Color = EYE
-		glow.Range = 9
-		glow.Brightness = 1.2
-		glow.Parent = head
-		-- рога
-		for _, sx in ipairs({ -1, 1 }) do
-			add(model, "Horn", V(0.3, 1.6, 0.3), head.CFrame * CFrame.new(sx * hs.X * 0.35, hs.Y * 0.7, hs.Z * 0.1) * CFrame.Angles(math.rad(-25), 0, math.rad(-20 * sx)), RGB(60, 55, 50), Enum.Material.Slate, head)
-		end
-	end
-	local torso = model:FindFirstChild("UpperTorso")
-	if torso then
-		-- шипы вдоль спины и бронепластины
-		for k = 0, 4 do
-			add(model, "Spike", V(0.35, 1.4 - k * 0.15, 0.35), torso.CFrame * CFrame.new(0, torso.Size.Y * 0.45 - k * 0.55, torso.Size.Z / 2 + 0.3) * CFrame.Angles(math.rad(35), 0, 0), RGB(70, 66, 60), Enum.Material.Slate, torso)
-		end
-		add(model, "ChestPlate", V(torso.Size.X * 0.9, torso.Size.Y * 0.55, 0.25), torso.CFrame * CFrame.new(0, 0.2, -torso.Size.Z / 2 - 0.1), RGB(50, 48, 46), Enum.Material.CorrodedMetal, torso)
-	end
-	-- когти
-	for _, name in ipairs({ "LeftHand", "RightHand" }) do
-		local hand = model:FindFirstChild(name)
-		if hand then
-			for k = -1, 1 do
-				add(model, "Claw", V(0.12, 1.3, 0.12), hand.CFrame * CFrame.new(k * 0.22, -hand.Size.Y / 2 - 0.5, -0.1) * CFrame.Angles(math.rad(-15), 0, 0), RGB(210, 205, 190), Enum.Material.SmoothPlastic, hand)
-			end
-		end
-	end
+	return m
 end
 
 -- opts: parent, spawn (CFrame), patrol ({Vector3}), getPlayers(), inSafeZone(pos) -> bool,
@@ -136,9 +60,8 @@ function Monster.new(opts)
 	self.alive = true
 	self.state = "patrol"
 	self.lastAttack = 0
-	local model, real = buildRig()
+	local model = buildRig()
 	model.Name = S.Name
-	decorate(model)
 	self.model = model
 	self.humanoid = model:FindFirstChildOfClass("Humanoid")
 	self.root = model:FindFirstChild("HumanoidRootPart")
@@ -147,6 +70,9 @@ function Monster.new(opts)
 	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
 	hum.BreakJointsOnDeath = false
+	hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+	hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
 	hum.MaxHealth = self.maxHealth
 	hum.Health = self.maxHealth
 	hum.WalkSpeed = S.PatrolSpeed
@@ -162,7 +88,7 @@ function Monster.new(opts)
 			end)
 		end
 	end
-	self.path = PathfindingService:CreatePath({ AgentRadius = 3, AgentHeight = 9, AgentCanJump = false, WaypointSpacing = 6 })
+	self.path = PathfindingService:CreatePath({ AgentRadius = 4, AgentHeight = 8, AgentCanJump = false, WaypointSpacing = 6 })
 
 	-- шаги и рычание
 	local step = Instance.new("Sound")
@@ -173,37 +99,12 @@ function Monster.new(opts)
 	step.RollOffMaxDistance = 80
 	step.Parent = self.root
 	self.step = step
-	if real then
-		local animator = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator")
-		animator.Parent = hum
-		local function load(id)
-			local a = Instance.new("Animation")
-			a.AnimationId = id
-			local ok, t = pcall(function()
-				return animator:LoadAnimation(a)
-			end)
-			return ok and t or nil
-		end
-		self.tracks = { walk = load(Config.Animations.Walk), run = load(Config.Animations.Run) }
-	end
 	hum.Running:Connect(function(speed)
 		local moving = speed > 0.5
 		if moving and not step.IsPlaying then
 			step:Play()
 		elseif not moving then
 			step:Stop()
-		end
-		if self.tracks then
-			local want = moving and ((speed > 14 and self.tracks.run) or self.tracks.walk) or nil
-			if want ~= self.current then
-				if self.current then
-					self.current:Stop(0.2)
-				end
-				if want then
-					want:Play(0.2)
-				end
-				self.current = want
-			end
 		end
 	end)
 	task.spawn(function()
@@ -260,7 +161,7 @@ function Monster:Think()
 		local char = p.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if hrp and hum and hum.Health > 0 and p:GetAttribute("DevGhost") ~= true and p:GetAttribute("Downed") ~= true and not self.opts.inSafeZone(hrp.Position) then
+		if hrp and hum and hum.Health > 0 and p:GetAttribute("DevGhost") ~= true and p:GetAttribute("Downed") ~= true and p:GetAttribute("Hidden") ~= true and not self.opts.inSafeZone(hrp.Position) then
 			local d = (hrp.Position - self.root.Position).Magnitude
 			local sees = d < S.SightRange and self:LineOfSight(self.head.Position, hrp.Position, char)
 			local hears = d < S.HearRange and hrp.AssemblyLinearVelocity.Magnitude > 18
@@ -281,7 +182,7 @@ function Monster:Think()
 
 	if self.state == "chase" and self.target and self.target.Character then
 		local hrp = self.target.Character:FindFirstChild("HumanoidRootPart")
-		if not hrp or self.opts.inSafeZone(hrp.Position) or self.target:GetAttribute("Downed") == true then
+		if not hrp or self.opts.inSafeZone(hrp.Position) or self.target:GetAttribute("Downed") == true or self.target:GetAttribute("Hidden") == true then
 			self.state = "patrol"
 			return
 		end
@@ -323,6 +224,7 @@ function Monster:Attack(player)
 	if look.Magnitude > 0.1 then
 		self.model:PivotTo(CFrame.lookAt(root.Position, root.Position + look))
 	end
+	self.model:SetAttribute("Attacks", (self.model:GetAttribute("Attacks") or 0) + 1)
 	self.opts.damage(player, self.dmg)
 end
 
@@ -333,18 +235,7 @@ function Monster:TakeDamage(amount, fromPos)
 	local hum = self.humanoid
 	hum.Health = math.max(0, hum.Health - amount)
 	self.model:SetAttribute("HP", hum.Health)
-	-- вспышка красным
-	for _, d in ipairs(self.model:GetDescendants()) do
-		if d:IsA("BasePart") and d.Name ~= "Eye" and d.Transparency < 1 then
-			local old = d.Color
-			d.Color = RGB(200, 40, 40)
-			task.delay(0.12, function()
-				if d.Parent then
-					d.Color = old
-				end
-			end)
-		end
-	end
+	self.model:SetAttribute("Flash", (self.model:GetAttribute("Flash") or 0) + 1)
 	-- отброс
 	if fromPos then
 		local dir = (self.root.Position - fromPos) * V(1, 0, 1)
@@ -369,14 +260,8 @@ function Monster:Die(retreat)
 	self.alive = false
 	self.step:Stop()
 	self.humanoid:MoveTo(self.root.Position)
-	for _, d in ipairs(self.model:GetDescendants()) do
-		if d:IsA("BasePart") then
-			d.Anchored = true
-			TweenService:Create(d, TweenInfo.new(retreat and 2.5 or 1.2), { Transparency = 1, CFrame = d.CFrame - V(0, retreat and 8 or 3, 0) }):Play()
-		elseif d:IsA("PointLight") then
-			d.Enabled = false
-		end
-	end
+	self.model:SetAttribute("Dead", retreat and "retreat" or "kill")
+	self.root.Anchored = true
 	task.delay(3, function()
 		self.model:Destroy()
 	end)

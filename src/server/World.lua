@@ -328,9 +328,14 @@ local function safe(fn)
 	end
 end
 
+local terrainBuilt = {}
 function World.BuildTerrain(O)
+	if terrainBuilt[O.X] then
+		return
+	end
+	terrainBuilt[O.X] = true
 	local terrain = workspace.Terrain
-	local size = HALF * 2 + 700
+	local size = Config.SlotSpacing - 120
 	-- снаружи лабиринта трава (там лес), внутри коридоров — утоптанная земля
 	safe(function()
 		terrain:FillBlock(CFrame.new(O + V(0, -8, 0)), V(size, 16, size), M.Grass)
@@ -341,31 +346,48 @@ function World.BuildTerrain(O)
 	safe(function()
 		terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(CLEAR_HALF * 2, 4, CLEAR_HALF * 2), M.Grass)
 	end)
-	-- озеро: песчаный пляж, выемка и вода
-	safe(function()
-		terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -2, 0)), 4, SAND_R, M.Sand)
-	end)
-	safe(function()
-		terrain:FillCylinder(CFrame.new(O + LAKE + V(0, 0, 0)), 6, LAKE_R, M.Air)
-	end)
-	safe(function()
-		terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -9, 0)), 16, LAKE_R, M.Water)
-	end)
-	-- река
+	-- озеро и река. Сначала весь песок, потом выемка, потом вода —
+	-- иначе песок следующего куска реки закрывает воду предыдущего.
+	local segs = {}
 	for k = 1, #RIVER - 1 do
 		local a, b = O + RIVER[k], O + RIVER[k + 1]
 		local mid = (a + b) / 2
-		local len = (b - a).Magnitude + 8
-		local cf = CFrame.lookAt(mid, mid + (b - a))
+		table.insert(segs, { cf = CFrame.lookAt(mid, mid + (b - a)), len = (b - a).Magnitude })
+	end
+	local function fillWater(mat, lakeR, riverW, y, h)
 		safe(function()
-			terrain:FillBlock(cf * CFrame.new(0, -2, 0), V(26, 4, len), M.Sand)
+			terrain:FillCylinder(CFrame.new(O + LAKE + V(0, y, 0)), h, lakeR, mat)
 		end)
+		for _, sg in ipairs(segs) do
+			safe(function()
+				terrain:FillBlock(sg.cf * CFrame.new(0, y, 0), V(riverW, h, sg.len), mat)
+			end)
+		end
+		-- круглые стыки, чтобы на поворотах не было ступенек
+		for k = 2, #RIVER do
+			safe(function()
+				terrain:FillCylinder(CFrame.new(O + RIVER[k] + V(0, y, 0)), h, riverW / 2, mat)
+			end)
+		end
+	end
+	fillWater(M.Sand, SAND_R, 30, -2, 4)
+	fillWater(M.Air, LAKE_R, 16, 1, 6)
+	fillWater(M.Water, LAKE_R, 16, -6, 10)
+	-- холмы и горы вдалеке, чтобы с вертолёта не было видно края мира
+	local rng = Random.new(O.X + 11)
+	for k = 1, 22 do
+		local a = k / 22 * math.pi * 2 + rng:NextNumber(-0.1, 0.1)
+		local dist = rng:NextNumber(HALF + 420, HALF + 760)
+		local r = rng:NextNumber(110, 190)
+		local c = O + V(math.cos(a) * dist, -r * 0.55, math.sin(a) * dist)
 		safe(function()
-			terrain:FillBlock(cf * CFrame.new(0, 0, 0), V(16, 6, len), M.Air)
+			terrain:FillBall(c, r, M.Grass)
 		end)
-		safe(function()
-			terrain:FillBlock(cf * CFrame.new(0, -6, 0), V(16, 10, len), M.Water)
-		end)
+		if k % 3 == 0 then
+			safe(function()
+				terrain:FillBall(c + V(0, r * 0.35, 0), r * 0.55, M.Rock)
+			end)
+		end
 	end
 	safe(function()
 		if not terrain:FindFirstChildOfClass("Clouds") then
@@ -386,19 +408,23 @@ function World.BuildWaterSurface(parent, O)
 	local m = Instance.new("Model")
 	m.Name = "WaterSurface"
 	local water = RGB(45, 110, 125)
-	local props = { CanCollide = false, CanQuery = false, Transparency = 0.25, Reflectance = 0.25, CastShadow = false }
-	Parts.box(m, "Lake", CFrame.new(O + LAKE + V(0, -1.2, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.4, LAKE_R * 2, LAKE_R * 2), water, M.Glass, {
-		Shape = Enum.PartType.Cylinder,
-		CanCollide = false,
-		CanQuery = false,
-		Transparency = 0.25,
-		Reflectance = 0.25,
-		CastShadow = false,
-	})
+	local function props()
+		return { Shape = Enum.PartType.Cylinder, CanCollide = false, CanQuery = false, Transparency = 0.45, Reflectance = 0.2, CastShadow = false }
+	end
+	Parts.box(m, "Lake", CFrame.new(O + LAKE + V(0, -0.5, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.2, LAKE_R * 2 - 2, LAKE_R * 2 - 2), water, M.Glass, props())
 	for k = 1, #RIVER - 1 do
 		local a, b = O + RIVER[k], O + RIVER[k + 1]
 		local mid = (a + b) / 2
-		Parts.box(m, "River", CFrame.lookAt(mid, mid + (b - a)) * CFrame.new(0, -1.2, 0), V(15, 0.4, (b - a).Magnitude + 6), water, M.Glass, props)
+		Parts.box(m, "River", CFrame.lookAt(mid, mid + (b - a)) * CFrame.new(0, -0.55, 0), V(15, 0.2, (b - a).Magnitude - 15), water, M.Glass, {
+			CanCollide = false,
+			CanQuery = false,
+			Transparency = 0.45,
+			Reflectance = 0.2,
+			CastShadow = false,
+		})
+	end
+	for k = 2, #RIVER do
+		Parts.box(m, "RiverBend", CFrame.new(O + RIVER[k] + V(0, -0.6, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.2, 15, 15), water, M.Glass, props())
 	end
 	m.Parent = parent
 end
@@ -408,28 +434,37 @@ function World.BuildOuterForest(parent, O, seed)
 	local m = Instance.new("Model")
 	m.Name = "OuterForest"
 	local rng = Random.new(seed + 5)
+	local far = HALF + 900
 	local placed, tries = 0, 0
-	while placed < 320 and tries < 3000 do
+	while placed < 900 and tries < 8000 do
 		tries += 1
-		local x, z = rng:NextNumber(-HALF - 260, HALF + 260), rng:NextNumber(-HALF - 260, HALF + 260)
-		if math.max(math.abs(x), math.abs(z)) > HALF + 22 then
+		-- больше деревьев ближе к стенам, реже вдали
+		local r = HALF + 24 + (rng:NextNumber() ^ 1.6) * (far - HALF - 24)
+		local a = rng:NextNumber(0, math.pi * 2)
+		local x, z = math.cos(a) * r * 1.15, math.sin(a) * r * 1.15
+		if math.max(math.abs(x), math.abs(z)) > HALF + 22 and math.max(math.abs(x), math.abs(z)) < Config.SlotSpacing / 2 - 80 then
 			placed += 1
 			local p = O + V(x, 0, z)
-			local h = rng:NextNumber(30, 50)
+			local h = rng:NextNumber(30, 54)
+			local leaf = RGB(rng:NextInteger(30, 52), rng:NextInteger(74, 108), rng:NextInteger(34, 50))
+			local s1 = rng:NextNumber(16, 24)
 			Parts.box(m, "Trunk", CFrame.new(p + V(0, h / 2, 0)), V(3, h, 3), RGB(78, 56, 38), M.Wood)
-			local leaf = RGB(rng:NextInteger(34, 52), rng:NextInteger(80, 108), rng:NextInteger(36, 50))
-			local s1 = rng:NextNumber(16, 22)
-			Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.75, 0)), V(s1, s1 * 0.85, s1), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
-			Parts.box(m, "Crown", CFrame.new(p + V(rng:NextNumber(-3, 3), h * 0.95, rng:NextNumber(-3, 3))), V(s1 * 0.7, s1 * 0.6, s1 * 0.7), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+			if rng:NextNumber() < 0.4 then
+				-- ель
+				Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.62, 0)), V(s1 * 1.1, h * 0.75, s1 * 1.1), RGB(28, 66, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+			else
+				Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.75, 0)), V(s1, s1 * 0.85, s1), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+				if r < HALF + 300 then
+					Parts.box(m, "Crown", CFrame.new(p + V(rng:NextNumber(-3, 3), h * 0.95, rng:NextNumber(-3, 3))), V(s1 * 0.7, s1 * 0.6, s1 * 0.7), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+				end
+			end
 		end
 	end
 	m.Parent = parent
 end
 
-function World.ClearTerrain(O)
-	local size = HALF * 2 + 720
-	workspace.Terrain:FillBlock(CFrame.new(O + V(0, -6, 0)), V(size, 20, size), M.Air)
-end
+-- рельеф у каждого места одинаковый, поэтому его не стираем, а строим один раз
+function World.ClearTerrain(_) end
 
 ------------------------------------------------------------------
 -- Записки прошлых выживших и заброшенные лагеря
@@ -483,6 +518,31 @@ local function camp(parent, center, rng, noteIndex)
 	note(parent, base * CFrame.new(0.5, 0.1, 1) * CFrame.Angles(0, 0.4, 0), rng, noteIndex)
 end
 
+-- заросли лиан: занавес из свисающих стеблей и шапка листвы сверху
+local function vineHide(parent, pos, rng)
+	local m = Instance.new("Model")
+	m.Name = "VineHide"
+	local center = Parts.box(m, "HideCenter", CFrame.new(pos + V(0, 3, 0)), V(4, 6, 4), IVY, M.LeafyGrass, NOCOLLIDE)
+	center.Transparency = 1
+	Parts.box(m, "Canopy", CFrame.new(pos + V(0, 10, 0)), V(10, 5, 10), IVY, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+	for k = 1, 30 do
+		local a = k / 30 * math.pi * 2 + rng:NextNumber(-0.1, 0.1)
+		local r = rng:NextNumber(2.6, 3.8)
+		local len = rng:NextNumber(7, 10)
+		local top = 10
+		local c = RGB(rng:NextInteger(40, 66), rng:NextInteger(78, 110), rng:NextInteger(36, 52))
+		Parts.box(m, "Vine", CFrame.new(pos + V(math.cos(a) * r, top - len / 2, math.sin(a) * r)) * CFrame.Angles(rng:NextNumber(-0.06, 0.06), a, rng:NextNumber(-0.06, 0.06)), V(rng:NextNumber(0.25, 0.5), len, rng:NextNumber(0.6, 1.4)), c, M.LeafyGrass, NOCOLLIDE)
+	end
+	for _ = 1, 8 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		Parts.box(m, "Leaves", CFrame.new(pos + V(math.cos(a) * 3.4, rng:NextNumber(1, 7), math.sin(a) * 3.4)), V(2.2, 1.6, 2.2), IVY, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+	end
+	local p = prompt(center, "Спрятаться", "Заросли лиан", 0.3, 9)
+	tag(p, "HidePrompt")
+	m.Parent = parent
+	return m
+end
+
 ------------------------------------------------------------------
 -- Поляна
 ------------------------------------------------------------------
@@ -493,17 +553,28 @@ function World.BuildClearing(parent, seed, O)
 	local refs = { model = m, nodes = {} }
 	local E = CLEAR_HALF
 
-	-- мост через реку на тропе к северным воротам
-	local bz = -82
-	Parts.span(m, "Bridge", O, V(-5, 0.3, bz - 18), V(5, 1, bz + 18), WOOD, M.WoodPlanks)
-	for _, x in ipairs({ -5, 5 }) do
-		Parts.span(m, "BridgeRail", O, V(x - 0.3, 1, bz - 18), V(x + 0.3, 3.8, bz + 18), RGB(70, 48, 30), M.Wood)
-		for z = bz - 17, bz + 17, 5 do
-			Parts.span(m, "BridgePost", O, V(x - 0.4, 0, z - 0.4), V(x + 0.4, 4.2, z + 0.4), RGB(70, 48, 30), M.Wood)
+	-- горбатый мост через реку на тропе к северным воротам (река там на z ≈ -84)
+	local bz = -84
+	local deck = { { -22, -12, 0.5, 2.2 }, { -12, -6, 2.2, 3.4 }, { -6, 6, 3.4, 3.4 }, { 6, 12, 3.4, 2.2 }, { 12, 22, 2.2, 0.5 } }
+	for _, d in ipairs(deck) do
+		local a, b = O + V(0, d[3], bz + d[1]), O + V(0, d[4], bz + d[2])
+		local mid = (a + b) / 2
+		local len = (b - a).Magnitude + 0.4
+		local cf = CFrame.lookAt(mid, b)
+		Parts.box(m, "Bridge", cf * CFrame.new(0, -0.35, 0), V(9, 0.7, len), WOOD, M.WoodPlanks)
+		for _, x in ipairs({ -4.4, 4.4 }) do
+			Parts.box(m, "BridgeRail", cf * CFrame.new(x, 2.6, 0), V(0.4, 0.4, len), RGB(70, 48, 30), M.Wood)
+			Parts.box(m, "BridgePost", cf * CFrame.new(x, 1.2, -len / 2 + 0.3), V(0.5, 3.2, 0.5), RGB(70, 48, 30), M.Wood)
 		end
 	end
-	-- тропинки от лифта к четырём воротам
-	Parts.span(m, "Path", O, V(-3.5, 0, -E + 2), V(3.5, 0.06, E - 2), RGB(120, 100, 70), M.Ground)
+	for _, z in ipairs({ -9, 9 }) do
+		for _, x in ipairs({ -3.5, 3.5 }) do
+			Parts.box(m, "BridgePile", CFrame.new(O + V(x, -3, bz + z)), V(1, 12, 1), RGB(60, 42, 28), M.Wood)
+		end
+	end
+	-- тропинки от лифта к четырём воротам (через реку — по мосту)
+	Parts.span(m, "Path", O, V(-3.5, 0, bz + 22), V(3.5, 0.06, E - 2), RGB(120, 100, 70), M.Ground)
+	Parts.span(m, "Path", O, V(-3.5, 0, -E + 2), V(3.5, 0.06, bz - 22), RGB(120, 100, 70), M.Ground)
 	Parts.span(m, "Path", O, V(-E + 2, 0, -3.5), V(E - 2, 0.06, 3.5), RGB(120, 100, 70), M.Ground)
 	-- деревянный причал на озере
 	local dock = O + LAKE + V(52, 0, 40)
@@ -565,7 +636,28 @@ function World.BuildClearing(parent, seed, O)
 		end
 		return O + V(rng:NextNumber(-E + 10, E - 10), 0, -E + 14)
 	end
-	for _ = 1, 95 do
+	-- деревья растут одной большой рощей (юго-восток поляны) и отрастают после вырубки
+	local GROVE, GR = V(118, 0, 118), 78
+	local grove = {}
+	for _ = 1, 900 do
+		if #grove >= 110 then
+			break
+		end
+		local ang, rr = rng:NextNumber(0, math.pi * 2), GR * math.sqrt(rng:NextNumber())
+		local p = GROVE + V(math.cos(ang) * rr, 0, math.sin(ang) * rr)
+		local ok = math.abs(p.X) < E - 8 and math.abs(p.Z) < E - 8 and math.abs(p.X) > 8 and math.abs(p.Z) > 8 and (p - V(34, 0, 34)).Magnitude > 16
+		for _, q in ipairs(grove) do
+			if (q - p).Magnitude < 8.5 then
+				ok = false
+				break
+			end
+		end
+		if ok then
+			table.insert(grove, p)
+			table.insert(refs.nodes, node(m, "tree", O + p, rng))
+		end
+	end
+	for _ = 1, 12 do
 		table.insert(refs.nodes, node(m, "tree", freeSpot(18), rng))
 	end
 	for _ = 1, 16 do
@@ -1088,6 +1180,14 @@ function World.BuildMaze(parent, seed, O)
 	for k = 9, 16 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-8, 8), 0.1, rng:NextNumber(-8, 8))
 		note(m, CFrame.new(p) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), rng, k)
+	end
+	-- заросли лиан: можно залезть внутрь и спрятаться от Скрежетников
+	for _ = 1, 26 do
+		local c = refs.cells[rng:NextInteger(1, #refs.cells)]
+		if (c - O).Magnitude > CLEAR_HALF + 40 then
+			local dir = ({ V(1, 0, 0), V(-1, 0, 0), V(0, 0, 1), V(0, 0, -1) })[rng:NextInteger(1, 4)]
+			vineHide(m, c + dir * 9.5, rng)
+		end
 	end
 
 	-- выход и вертолётная площадка за ним

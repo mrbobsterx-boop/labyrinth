@@ -11,10 +11,11 @@ Items.Resources = {
 	fang = { Name = "Клык Скрежетника", Order = 6 },
 	berry = { Name = "Ягоды (H — съесть)", Order = 7 },
 	bandage = { Name = "Бинт (поднять друга)", Order = 8 },
-	key = { Name = "КЛЮЧ-КАРТА ВЫХОДА", Order = 9 },
+	planks = { Name = "Доски", Order = 9 },
+	key = { Name = "КЛЮЧ-КАРТА ВЫХОДА", Order = 10 },
 }
 
--- Kind: pickaxe / axe / sword / spear / torch. Tier — что может добывать.
+-- Kind: pickaxe / axe / sword / spear / torch / blueprint / hammer. Tier — что может добывать.
 Items.Tools = {
 	fists = { Name = "Кулаки", Kind = "fists", Tier = 0, Damage = 5, Range = 7 },
 	wood_pickaxe = { Name = "Деревянная кирка", Kind = "pickaxe", Tier = 1, Damage = 6, Range = 9, Color = { 120, 85, 50 } },
@@ -27,13 +28,20 @@ Items.Tools = {
 	iron_sword = { Name = "Железный меч", Kind = "sword", Tier = 0, Damage = 40, Range = 9.5, Color = { 200, 200, 210 } },
 	crystal_blade = { Name = "Кристальный клинок", Kind = "sword", Tier = 0, Damage = 65, Range = 10, Color = { 170, 90, 255 } },
 	torch = { Name = "Факел", Kind = "torch", Tier = 0, Damage = 0, Range = 0, Color = { 255, 150, 60 } },
+	blueprint = { Name = "Чертёж (строить)", Kind = "blueprint", Tier = 0, Damage = 0, Range = 0, Color = { 70, 110, 190 } },
+	hammer = { Name = "Молоток (улучшать)", Kind = "hammer", Tier = 0, Damage = 4, Range = 10, Color = { 110, 110, 115 } },
 }
 
 -- Station: nil — крафт из инвентаря (C), "bench" — нужен верстак рядом (Level — его уровень)
 Items.Recipes = {
-	{ Id = "workbench", Name = "Верстак (поставить перед собой)", Cost = { wood = 12, stone = 4 } },
+	{ Id = "workbench", Name = "Верстак (поставить перед собой)", Cost = { wood = 12, stone = 4 }, Place = "workbench" },
 	{ Id = "bandage", Name = "Бинт", Cost = { fiber = 3 }, Res = "bandage" },
 	{ Id = "torch", Cost = { wood = 3, fiber = 1 } },
+	{ Id = "planks", Name = "Доски ×4", Cost = { wood = 3 }, Res = "planks", Amount = 4 },
+	{ Id = "blueprint", Cost = { planks = 4 } },
+	{ Id = "hammer", Cost = { wood = 3, stone = 2 } },
+	{ Id = "bed", Name = "Кровать (поставить; ночью — проспать ночь)", Cost = { planks = 8, fiber = 6 }, Place = "bed" },
+	{ Id = "chest", Name = "Сундук-хранилище (поставить)", Cost = { planks = 10 }, Place = "chest" },
 	{ Id = "stone_pickaxe", Station = "bench", Level = 1, Cost = { wood = 5, stone = 8 } },
 	{ Id = "stone_axe", Station = "bench", Level = 1, Cost = { wood = 5, stone = 6 } },
 	{ Id = "spear", Station = "bench", Level = 1, Cost = { wood = 8, stone = 3, fiber = 2 } },

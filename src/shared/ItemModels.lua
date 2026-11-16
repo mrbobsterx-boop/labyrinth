@@ -49,9 +49,11 @@ function ItemModels.build(id, base)
 
 	if def.Kind == "pickaxe" then
 		local grip = part(m, "Grip", V(0.25, 3.2, 0.25), base * CFrame.new(0, 1.2, 0), WOOD, Enum.Material.Wood)
-		part(m, "Head", V(2.6, 0.35, 0.35), base * CFrame.new(0, 2.7, 0), c, metal)
-		for _, sx in ipairs({ -1, 1 }) do
-			part(m, "Tip", V(0.6, 0.25, 0.25), base * CFrame.new(sx * 1.45, 2.55, 0) * CFrame.Angles(0, 0, math.rad(-25 * sx)), c, metal)
+		-- голова кирки лежит в плоскости удара (острия вперёд и назад)
+		part(m, "Head", V(0.35, 0.35, 2.4), base * CFrame.new(0, 2.7, 0), c, metal)
+		part(m, "Collar", V(0.45, 0.5, 0.45), base * CFrame.new(0, 2.7, 0), RGB(70, 60, 50), Enum.Material.Metal)
+		for _, sz in ipairs({ -1, 1 }) do
+			part(m, "Tip", V(0.22, 0.22, 0.7), base * CFrame.new(0, 2.55, sz * 1.4) * CFrame.Angles(math.rad(25 * sz), 0, 0), c, metal)
 		end
 		m.PrimaryPart = grip
 	elseif def.Kind == "axe" then
@@ -92,6 +94,17 @@ function ItemModels.build(id, base)
 		fire.Size = 2
 		fire.Heat = 4
 		fire.Parent = head
+		m.PrimaryPart = grip
+	end
+	if def.Kind == "blueprint" then
+		-- свёрнутый синий чертёж
+		local grip = part(m, "Grip", V(0.5, 1.8, 0.5), base * CFrame.new(0, 0.5, 0), RGB(60, 100, 180), Enum.Material.Fabric)
+		part(m, "Sheet", V(0.08, 1.6, 1.4), base * CFrame.new(0.3, 0.9, -0.5), RGB(90, 140, 220), Enum.Material.SmoothPlastic)
+		part(m, "Line", V(0.1, 1.2, 0.06), base * CFrame.new(0.32, 0.9, -0.5), RGB(230, 240, 255), Enum.Material.Neon)
+		m.PrimaryPart = grip
+	elseif def.Kind == "hammer" then
+		local grip = part(m, "Grip", V(0.25, 2.2, 0.25), base * CFrame.new(0, 0.8, 0), WOOD, Enum.Material.Wood)
+		part(m, "Head", V(0.5, 0.5, 1.3), base * CFrame.new(0, 2, -0.1), c, Enum.Material.Metal)
 		m.PrimaryPart = grip
 	end
 	-- точка опоры модели = рукоять (base), чтобы PivotTo ставил рукоять в руку

@@ -21,6 +21,9 @@ local Config = require(Shared:WaitForChild("Config"))
 local Items = require(Shared:WaitForChild("Items"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local Viewmodel = require(script.Parent:WaitForChild("Viewmodel"))
+local MonsterView = require(script.Parent:WaitForChild("MonsterView"))
+local BuildMode = require(script.Parent:WaitForChild("BuildMode"))
+MonsterView.start()
 
 local function remote(n)
 	return Remotes:WaitForChild(n)
@@ -210,6 +213,7 @@ local hotbar = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDi
 make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, hotbar)
 local tools = {}
 local equipped = nil
+BuildMode.init(gui, make)
 
 local function equip(id)
 	if id == equipped then
@@ -260,7 +264,11 @@ player.AttributeChanged:Connect(function(name)
 		tools = ok and list or {}
 		refreshHotbar()
 	elseif name == "Equipped" then
-		equipped = player:GetAttribute("Equipped")
+		local e = player:GetAttribute("Equipped")
+		if e ~= equipped then
+			equipped = e
+			Viewmodel.setItem(e or "fists")
+		end
 		refreshHotbar()
 	elseif name == "InMatch" then
 		if not inMatch() then
@@ -476,7 +484,13 @@ local function doSwing()
 		return
 	end
 	local def = Items.Tools[equipped or "fists"] or Items.Tools.fists
-	if def.Kind == "torch" or player:GetAttribute("Downed") then
+	if def.Kind == "blueprint" then
+		if BuildMode.place(remote("Build")) then
+			sound(Config.Sounds.Click, 0.6, 0.8)
+		end
+		return
+	end
+	if def.Kind == "torch" or player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") then
 		return -- факелом не бьют: он только светит
 	end
 	if os.clock() - lastSwing < 0.42 then
@@ -516,6 +530,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
 		doSwing()
+	elseif input.KeyCode == Enum.KeyCode.R and equipped == "blueprint" then
+		BuildMode.cycle()
+		sound(Config.Sounds.Click, 0.4, 1.2)
 	elseif input.KeyCode == Enum.KeyCode.H then
 		remote("Eat"):FireServer()
 	elseif input.KeyCode == Enum.KeyCode.C and inMatch() and not cutscene then
@@ -919,11 +936,24 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	lobbyLabel.ZIndex = 22
 	lobbyLabel.Text = "ВЫ ВЫБРАЛИСЬ ИЗ ЛАБИРИНТА!\nДней в лабиринте: " .. day .. "   ·   +" .. coins .. " монет"
 	task.wait(4)
+	-- ждём, пока сервер вернёт нас в лобби, и только потом убираем чёрный экран
+	local waitT = os.clock()
+	while inMatch() and os.clock() - waitT < 12 do
+		task.wait(0.1)
+	end
+	local char = player.Character or player.CharacterAdded:Wait()
+	local hum = char:WaitForChild("Humanoid", 5)
+	task.wait(0.3)
+	char = player.Character
+	hum = char and char:FindFirstChildOfClass("Humanoid") or hum
+	cam.CameraType = Enum.CameraType.Custom
+	if hum then
+		cam.CameraSubject = hum
+	end
 	lobbyLabel.Text = ""
 	lobbyLabel.ZIndex = 1
-	TweenService:Create(fade, TweenInfo.new(1.5), { BackgroundTransparency = 1 }):Play()
-	cam.CameraType = Enum.CameraType.Custom
 	cutscene = false
+	TweenService:Create(fade, TweenInfo.new(1.5), { BackgroundTransparency = 1 }):Play()
 end)
 
 ------------------------------------------------------------------
@@ -1129,12 +1159,39 @@ remote("Note").OnClientEvent:Connect(function(title, text)
 	sound(Config.Sounds.Click, 0.4, 0.7)
 end)
 
+-- сон и укрытие в лианах
+local restPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(0, 0, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 5 }, gui)
+local restText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.75), Size = UDim2.new(0.8, 0, 0, 60), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 22, TextColor3 = RGB(230, 235, 220), TextStrokeTransparency = 0.4, Text = "", ZIndex = 5 }, restPanel)
+local leafFrames = {}
+for k = 1, 14 do
+	local a = k / 14 * math.pi * 2
+	local f = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5 + math.cos(a) * 0.55, 0.5 + math.sin(a) * 0.6),
+		Size = UDim2.fromScale(0.5, 0.5),
+		Rotation = math.deg(a),
+		BackgroundColor3 = RGB(30 + k % 3 * 10, 70 + k % 4 * 8, 30),
+		BackgroundTransparency = 0.15,
+		ZIndex = 5,
+	}, restPanel)
+	corner(f, 200)
+	table.insert(leafFrames, f)
+end
+
 -- ранение
 local downedPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(90, 0, 0), BackgroundTransparency = 0.6, Visible = false, ZIndex = 6 }, gui)
 local downedText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.new(0.8, 0, 0, 120), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = RGB(255, 230, 220), TextStrokeTransparency = 0.3, Text = "", ZIndex = 6 }, downedPanel)
 
-player.CharacterAdded:Connect(function()
+player.CharacterAdded:Connect(function(c)
 	task.wait(1)
+	if not cutscene then
+		local cam = workspace.CurrentCamera
+		cam.CameraType = Enum.CameraType.Custom
+		local h = c:FindFirstChildOfClass("Humanoid")
+		if h then
+			cam.CameraSubject = h
+		end
+	end
 	crouched = false
 	Viewmodel.rebuild()
 	Viewmodel.setItem(equipped or "fists", true)
@@ -1198,6 +1255,15 @@ RunService.RenderStepped:Connect(function(dt)
 	-- ранение
 	local downed = player:GetAttribute("Downed") == true
 	downedPanel.Visible = downed and inMatch()
+	local sleeping, hidden = player:GetAttribute("Sleeping") == true, player:GetAttribute("Hidden") == true
+	restPanel.Visible = (sleeping or hidden) and inMatch()
+	if restPanel.Visible then
+		restPanel.BackgroundTransparency = sleeping and 0.15 or 0.75
+		for _, f in ipairs(leafFrames) do
+			f.Visible = hidden
+		end
+		restText.Text = sleeping and "Zzz... Ты спишь. Ночь пройдёт, когда уснут все.  (E у кровати — встать)" or "Ты в зарослях лиан. Скрежетники тебя не видят.  (E — вылезти)"
+	end
 	if downed then
 		local dl = (player:GetAttribute("DownedEnd") or 0) - workspace:GetServerTimeNow()
 		downedText.Text = "ТЫ РАНЕН\nДруг может поднять тебя бинтом (зажать E рядом с тобой)\nОчнёшься у лифта через " .. formatTime(dl)
@@ -1238,6 +1304,10 @@ RunService.RenderStepped:Connect(function(dt)
 	else
 		vmState.visible = false
 	end
+
+	-- строительство
+	local eqKind = equipped and Items.Tools[equipped] and Items.Tools[equipped].Kind
+	BuildMode.update((playing and (eqKind == "blueprint" or eqKind == "hammer")) and eqKind or nil, rayParams())
 
 	-- прицел
 	cross.Visible = playing

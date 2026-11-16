@@ -19,6 +19,8 @@ local Items = require(Shared:WaitForChild("Items"))
 local ItemModels = require(Shared:WaitForChild("ItemModels"))
 local World = require(script.Parent.World)
 local Monster = require(script.Parent.Monster)
+local Build = require(script.Parent.Build)
+local Building = require(Shared:WaitForChild("Building"))
 
 local V = Vector3.new
 
@@ -31,7 +33,7 @@ remotes.Parent = ReplicatedStorage
 local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
-	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect",
+	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -418,12 +420,42 @@ local function hitNode(p, model, def)
 		addRes(p, nd.Drop, nd.Amount * gain)
 		model:SetAttribute("Depleted", true)
 		setNodeVisible(model, false)
+		-- от дерева остаётся пень, потом оно заново вырастает
+		local stump
+		local trunk = kind == "tree" and model:FindFirstChild("Trunk")
+		if trunk then
+			local base = trunk.Position - V(0, trunk.Size.Y / 2, 0)
+			model.WorldPivot = CFrame.new(base)
+			stump = Instance.new("Part")
+			stump.Name = "Stump"
+			stump.Anchored = true
+			stump.Size = V(trunk.Size.X + 0.3, 1.4, trunk.Size.Z + 0.3)
+			stump.CFrame = CFrame.new(base + V(0, 0.7, 0))
+			stump.Color = trunk.Color
+			stump.Material = Enum.Material.Wood
+			stump.Parent = model.Parent
+		end
 		task.delay(Config.NodeRespawn, function()
-			if model.Parent then
-				model:SetAttribute("Depleted", false)
-				model:SetAttribute("HP", nd.Health)
+			if not model.Parent then
+				return
+			end
+			if stump then
+				stump:Destroy()
+				pcall(function()
+					model:ScaleTo(0.15)
+				end)
+				setNodeVisible(model, true)
+				for i = 1, 40 do
+					task.wait(0.25)
+					pcall(function()
+						model:ScaleTo(0.15 + 0.85 * i / 40)
+					end)
+				end
+			else
 				setNodeVisible(model, true)
 			end
+			model:SetAttribute("Depleted", false)
+			model:SetAttribute("HP", nd.Health)
 		end)
 	end
 	return true
@@ -522,6 +554,29 @@ R.Swing.OnServerEvent:Connect(function(p, hit, hitPos)
 	if not head or (head.Position - hitPos).Magnitude > def.Range + 4 then
 		return
 	end
+	-- молоток: улучшение постройки
+	local piece = Building.pieceOf(hit)
+	if piece and def.Kind == "hammer" and piece:IsDescendantOf(s.folder) then
+		local tier = (piece:GetAttribute("Tier") or 0) + 1
+		local t = Building.Tiers[tier]
+		if not t then
+			notify(p, "Это уже металл — сильнее не бывает")
+			return
+		end
+		for k, n in pairs(t.Cost) do
+			if (st.res[k] or 0) < n then
+				notify(p, "Для улучшения до «" .. t.Name .. "» нужно: " .. Items.Resources[k].Name .. " " .. n)
+				return
+			end
+		end
+		for k, n in pairs(t.Cost) do
+			addRes(p, k, -n)
+		end
+		Build.setTier(piece, tier)
+		R.HitMarker:FireClient(p, "node", "axe")
+		notify(p, piece.Name .. " → " .. t.Name)
+		return
+	end
 	local model = hit:FindFirstAncestorOfClass("Model")
 	while model and not s.monsters[model] and model.Parent and model.Parent:IsA("Model") do
 		model = model.Parent
@@ -560,6 +615,7 @@ end)
 ------------------------------------------------------------------
 -- Крафт: из инвентаря (C) и на верстаке
 ------------------------------------------------------------------
+local connectBed, connectChest
 local function recipeById(id)
 	for _, r in ipairs(Items.Recipes) do
 		if r.Id == id then
@@ -589,6 +645,200 @@ local function connectBench(s, bench)
 	end)
 end
 
+------------------------------------------------------------------
+-- Кровать, сундук, прятки в лианах
+------------------------------------------------------------------
+local function wake(p)
+	local st = state[p]
+	if not st or not st.sleeping then
+		return
+	end
+	st.sleeping = nil
+	p:SetAttribute("Sleeping", false)
+	local hrp, char = hrpOf(p)
+	if hrp then
+		hrp.Anchored = false
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.PlatformStand = false
+		end
+		char:PivotTo(hrp.CFrame * CFrame.new(0, 1, 0) * CFrame.Angles(math.rad(-90), 0, 0) + V(0, 1.5, 0))
+	end
+end
+
+local function checkSleep(s)
+	if s.phase ~= "night" then
+		return
+	end
+	local awake = 0
+	for _, q in ipairs(s.players) do
+		local st = state[q]
+		if st and not st.downed and not st.sleeping then
+			awake += 1
+		end
+	end
+	if awake == 0 and #s.players > 0 then
+		notifySession(s, "Все уснули... Ночь проходит.")
+		s.skip = true
+	end
+end
+
+function connectBed(s, bed, pr)
+	pr.Triggered:Connect(function(p)
+		local st = state[p]
+		if not st or st.session ~= s or st.downed then
+			return
+		end
+		if st.sleeping then
+			wake(p)
+			return
+		end
+		if s.phase ~= "night" then
+			notify(p, "Спать можно только ночью")
+			return
+		end
+		local hrp, char = hrpOf(p)
+		if not hrp then
+			return
+		end
+		st.sleeping = bed
+		p:SetAttribute("Sleeping", true)
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.PlatformStand = true
+		end
+		hrp.Anchored = true
+		char:PivotTo(bed:GetAttribute("SleepCF") * CFrame.Angles(math.rad(90), 0, 0))
+		notify(p, "Ты спишь. Если уснут все — ночь пройдёт. E у кровати — встать.")
+		checkSleep(s)
+	end)
+end
+
+function connectChest(s, chest, put, take)
+	local store = {}
+	local function label()
+		local n = 0
+		for _, v in pairs(store) do
+			n += v
+		end
+		put.ObjectText = n > 0 and ("Сундук (" .. n .. " шт.)") or "Сундук (пусто)"
+	end
+	put.Triggered:Connect(function(p)
+		local st = state[p]
+		if not st or st.session ~= s then
+			return
+		end
+		for k, n in pairs(st.res) do
+			if k ~= "key" and n > 0 then
+				store[k] = (store[k] or 0) + n
+				addRes(p, k, -n)
+			end
+		end
+		label()
+		notify(p, "Ресурсы сложены в сундук")
+	end)
+	take.Triggered:Connect(function(p)
+		local st = state[p]
+		if not st or st.session ~= s then
+			return
+		end
+		for k, n in pairs(store) do
+			addRes(p, k, n)
+		end
+		store = {}
+		label()
+		notify(p, "Ты забрал всё из сундука")
+	end)
+	local _ = chest
+end
+
+local function unhide(p)
+	local st = state[p]
+	if not st or not st.hidden then
+		return
+	end
+	local spot = st.hidden
+	st.hidden = nil
+	p:SetAttribute("Hidden", false)
+	spot:SetAttribute("Occupied", false)
+	local pr = spot:FindFirstChildOfClass("ProximityPrompt")
+	if pr then
+		pr.ActionText = "Спрятаться"
+	end
+	local hrp, char = hrpOf(p)
+	if hrp then
+		hrp.Anchored = false
+		local out = (spot:GetAttribute("Out") or spot.Position + V(0, 0, 6))
+		char:PivotTo(CFrame.lookAt(out + V(0, 1, 0), out + V(0, 1, 0) + (out - spot.Position) * V(1, 0, 1)))
+	end
+end
+
+------------------------------------------------------------------
+-- Строительство (чертёж)
+------------------------------------------------------------------
+R.Build.OnServerEvent:Connect(function(p, id, a)
+	local st = state[p]
+	local s = st and st.session
+	local def = typeof(id) == "string" and Building.ById[id]
+	local hrp = hrpOf(p)
+	if not s or not def or not hrp or st.downed or st.equipped ~= "blueprint" or typeof(a) ~= "table" then
+		return
+	end
+	-- проверка параметров
+	local ok = typeof(a.y) == "number" and a.y == a.y and math.abs(a.y) < 400
+	if def.Edge then
+		ok = ok and typeof(a.ex) == "number" and typeof(a.ez) == "number" and (a.axis == "X" or a.axis == "Z")
+		ok = ok and a.ex % 1 == 0 and a.ez % 1 == 0
+	else
+		ok = ok and typeof(a.cx) == "number" and typeof(a.cz) == "number" and a.cx % 1 == 0 and a.cz % 1 == 0
+	end
+	if not ok then
+		return
+	end
+	local args = { cx = a.cx, cz = a.cz, ex = a.ex, ez = a.ez, axis = a.axis, y = a.y, rot = (typeof(a.rot) == "number" and a.rot % 1 == 0) and a.rot % 4 or 0 }
+	local key = Building.key(id, args)
+	if s.pieces[key] and s.pieces[key].Parent then
+		notify(p, "Здесь уже стоит постройка")
+		return
+	end
+	local cf = Building.cframe(id, s.O, args)
+	if (cf.Position - hrp.Position).Magnitude > 32 then
+		return
+	end
+	if (cf.Position - s.O).Magnitude < 16 then
+		notify(p, "Слишком близко к лифту")
+		return
+	end
+	-- не строим внутри стен, деревьев и игроков
+	-- selene: allow(undefined_variable)
+	local op = OverlapParams.new()
+	op.FilterType = Enum.RaycastFilterType.Exclude
+	op.FilterDescendantsInstances = { s.buildFolder }
+	op.RespectCanCollide = true
+	local size = def.Size - V(0.6, 0.6, 0.6)
+	if id == "foundation" then
+		size = V(7.4, 1.2, 7.4)
+		cf = cf * CFrame.new(0, 0.8, 0)
+	end
+	for _, part in ipairs(workspace:GetPartBoundsInBox(cf, V(math.max(0.2, size.X), math.max(0.2, size.Y), math.max(0.2, size.Z)), op)) do
+		if not part:IsA("Terrain") then
+			notify(p, "Мешает: " .. part.Name)
+			return
+		end
+	end
+	for k, n in pairs(def.Cost) do
+		if (st.res[k] or 0) < n then
+			notify(p, "Не хватает: " .. Items.Resources[k].Name .. " (" .. n .. "). Доски делаются в крафте (C).")
+			return
+		end
+	end
+	for k, n in pairs(def.Cost) do
+		addRes(p, k, -n)
+	end
+	s.pieces[key] = Build.piece(s.buildFolder, id, s.O, args)
+	R.HitMarker:FireClient(p, "node", "axe")
+end)
+
 R.Craft.OnServerEvent:Connect(function(p, id)
 	local st = state[p]
 	local s = st and st.session
@@ -617,6 +867,20 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 		notify(p, "У тебя уже есть: " .. Items.toolName(r.Id))
 		return
 	end
+	-- инструмент того же вида, но лучше — уже есть
+	local newDef = Items.Tools[r.Id]
+	local function power(d)
+		return d.Kind == "sword" and d.Damage or d.Tier
+	end
+	if newDef and newDef.Kind ~= "torch" then
+		for _, t in ipairs(st.tools) do
+			local d = Items.Tools[t]
+			if d and d.Kind == newDef.Kind and power(d) >= power(newDef) then
+				notify(p, "У тебя уже есть лучше: " .. d.Name)
+				return
+			end
+		end
+	end
 	for k, n in pairs(r.Cost) do
 		if (st.res[k] or 0) < n then
 			notify(p, "Не хватает: " .. Items.Resources[k].Name)
@@ -626,7 +890,7 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 	for k, n in pairs(r.Cost) do
 		addRes(p, k, -n)
 	end
-	if r.Id == "workbench" then
+	if r.Place then
 		local look = hrp.CFrame.LookVector * V(1, 0, 1)
 		local pos = hrp.Position + look.Unit * 7
 		local params = RaycastParams.new()
@@ -634,21 +898,48 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 		params.FilterDescendantsInstances = { p.Character }
 		local hit = workspace:Raycast(pos + V(0, 6, 0), V(0, -30, 0), params)
 		local ground = hit and hit.Position or (pos - V(0, 3, 0))
-		local b = World.BuildWorkbench(s.folder, CFrame.lookAt(ground, ground - look))
-		table.insert(s.benches, b)
-		connectBench(s, b)
-		notifySession(s, p.DisplayName .. " поставил верстак")
+		local cf = CFrame.lookAt(ground, ground - look)
+		if r.Place == "workbench" then
+			local b = World.BuildWorkbench(s.folder, cf)
+			table.insert(s.benches, b)
+			connectBench(s, b)
+			notifySession(s, p.DisplayName .. " поставил верстак")
+		elseif r.Place == "bed" then
+			local bed, pr = Build.bed(s.folder, cf)
+			connectBed(s, bed, pr)
+			notify(p, "Кровать поставлена. Ночью ляг спать — если уснут все, ночь пройдёт быстрее.")
+		elseif r.Place == "chest" then
+			local chest, put, take = Build.chest(s.folder, cf)
+			connectChest(s, chest, put, take)
+			notify(p, "Сундук поставлен: E — положить всё, F — забрать всё.")
+		end
 	elseif r.Id == "upgrade2" then
 		bench.model:SetAttribute("Level", 2)
 		bench.label.Text = "Верстак · ур. 2"
 		notifySession(s, p.DisplayName .. " улучшил верстак до 2 уровня!")
 	elseif r.Res then
-		addRes(p, r.Res, 1)
+		addRes(p, r.Res, r.Amount or 1)
 		notify(p, "Создано: " .. Items.Resources[r.Res].Name)
 	else
-		table.insert(st.tools, r.Id)
+		-- новый инструмент заменяет старый того же вида (каменная кирка вместо деревянной)
+		local slot
+		for i = #st.tools, 1, -1 do
+			local d = Items.Tools[st.tools[i]]
+			if d and newDef and d.Kind == newDef.Kind and newDef.Kind ~= "torch" then
+				if st.equipped == st.tools[i] then
+					st.equipped = r.Id
+				end
+				table.remove(st.tools, i)
+				slot = i
+			end
+		end
+		table.insert(st.tools, slot or #st.tools + 1, r.Id)
 		p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
-		notify(p, "Создано: " .. Items.toolName(r.Id) .. " (выбери цифрой)")
+		if st.equipped == r.Id then
+			p:SetAttribute("Equipped", r.Id)
+			updateHeld(p)
+		end
+		notify(p, "Создано: " .. Items.toolName(r.Id) .. (slot and " (заменил старый)" or " (выбери цифрой)"))
 	end
 end)
 
@@ -722,7 +1013,10 @@ local function endSession(s)
 		if st and p.Parent then
 			st.session = nil
 			st.downed = false
+			st.hidden, st.sleeping = nil, nil
 			p:SetAttribute("Downed", false)
+			p:SetAttribute("Hidden", false)
+			p:SetAttribute("Sleeping", false)
 			p:SetAttribute("InMatch", false)
 			freshInventory(p)
 			p:LoadCharacter()
@@ -829,6 +1123,36 @@ local function connectSessionPrompts(s)
 					end
 					notify(p, (pr.ObjectText ~= "" and pr.ObjectText or "Находка") .. ": " .. table.concat(got, ", "))
 				end)
+			elseif CollectionService:HasTag(pr, "HidePrompt") then
+				local spot = pr.Parent
+				pr.Triggered:Connect(function(p)
+					local st = state[p]
+					if not st or st.session ~= s or st.downed then
+						return
+					end
+					if st.hidden then
+						unhide(p)
+						return
+					end
+					if spot:GetAttribute("Occupied") then
+						notify(p, "Тут уже кто-то прячется")
+						return
+					end
+					local hrp, char = hrpOf(p)
+					if not hrp then
+						return
+					end
+					-- откуда залезли — туда и вылезем
+					local flat = (hrp.Position - spot.Position) * V(1, 0, 1)
+					spot:SetAttribute("Out", spot.Position * V(1, 0, 1) + V(0, hrp.Position.Y - 1, 0) + (flat.Magnitude > 0.1 and flat.Unit or V(0, 0, 1)) * 6)
+					spot:SetAttribute("Occupied", true)
+					st.hidden = spot
+					p:SetAttribute("Hidden", true)
+					pr.ActionText = "Вылезти"
+					hrp.Anchored = true
+					char:PivotTo(CFrame.lookAt(spot.Position, spot.Position - flat))
+					notify(p, "Ты спрятался в лианах. Скрежетники тебя не видят. E — вылезти.")
+				end)
 			elseif CollectionService:HasTag(pr, "FiberPrompt") then
 				pr.Triggered:Connect(function(p)
 					if sessionOf(p) ~= s then
@@ -932,7 +1256,7 @@ local function connectSessionPrompts(s)
 				end
 				R.Outro:FireClient(q, s.maze.helipad, s.maze.exitOut, s.players, s.day, coins, s.O)
 			end
-			task.delay(32, function()
+			task.delay(35, function()
 				endSession(s)
 			end)
 		end)
@@ -942,6 +1266,9 @@ end
 local function sessionLoop(s)
 	while not s.ended do
 		setPhase(s, "day", s.diff.Day)
+		for _, q in ipairs(s.players) do
+			wake(q)
+		end
 		if s.gatesClosed then
 			moveGates(s, false, 6)
 			notifySession(s, "Рассвет. Врата открываются. День " .. s.day .. ".")
@@ -1032,6 +1359,10 @@ local function startSession(riders, diffId)
 	s.folder = Instance.new("Folder")
 	s.folder.Name = "Session_" .. slot
 	s.folder.Parent = workspace
+	s.pieces = {}
+	s.buildFolder = Instance.new("Folder")
+	s.buildFolder.Name = "Buildings"
+	s.buildFolder.Parent = s.folder
 	local seed = math.random(1, 1e6)
 	World.BuildTerrain(O)
 	s.clearing = World.BuildClearing(s.folder, seed, O)
@@ -1047,6 +1378,7 @@ local function startSession(riders, diffId)
 		freshInventory(p)
 		p:SetAttribute("InMatch", true)
 		p:SetAttribute("Difficulty", diffId)
+		p:SetAttribute("SessionO", O)
 	end
 	-- лифт приехал
 	for i, p in ipairs(riders) do
@@ -1336,6 +1668,9 @@ local function onCharacter(p, char)
 		end
 	end)
 	p:SetAttribute("Crouched", false)
+	p:SetAttribute("Hidden", false)
+	p:SetAttribute("Sleeping", false)
+	st.hidden, st.sleeping = nil, nil
 	task.wait()
 	if st.session then
 		place(p, st.session.clearing.liftSpawn, false)

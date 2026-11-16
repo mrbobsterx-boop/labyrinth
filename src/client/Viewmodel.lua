@@ -133,8 +133,11 @@ function Viewmodel.swing(kind)
 		return false
 	end
 	kind = kind or kindOf()
-	if kind == "torch" then
+	if kind == "torch" or kind == "blueprint" then
 		return false
+	end
+	if kind == "hammer" then
+		kind = "axe"
 	end
 	swingT, swingKind = 0, kind
 	punchLeft = not punchLeft
@@ -207,15 +210,17 @@ end
 -- как предмет лежит в ладони (рукоять снизу, рабочая часть вверх-вперёд в кадре)
 local function hold(kind)
 	if kind == "pickaxe" then
-		return CFrame.Angles(math.rad(-118), math.rad(10), 0) * CFrame.new(0, -0.9, 0)
+		return CFrame.Angles(math.rad(-125), 0, 0) * CFrame.new(0, -0.9, 0)
 	elseif kind == "axe" then
-		return CFrame.Angles(math.rad(-118), math.rad(-15), 0) * CFrame.new(0, -0.8, 0)
+		return CFrame.Angles(math.rad(-125), 0, 0) * CFrame.new(0, -0.8, 0)
 	elseif kind == "sword" then
 		return CFrame.Angles(math.rad(-105), 0, 0) * CFrame.new(0, -0.15, 0)
 	elseif kind == "spear" then
 		return CFrame.Angles(math.pi, 0, 0) * CFrame.new(0, -2.6, 0)
-	elseif kind == "torch" then
+	elseif kind == "torch" or kind == "blueprint" then
 		return CFrame.Angles(math.rad(-100), 0, 0) * CFrame.new(0, -0.3, 0)
+	elseif kind == "hammer" then
+		return CFrame.Angles(math.rad(-125), 0, 0) * CFrame.new(0, -0.6, 0)
 	end
 	return CFrame.new()
 end
@@ -267,22 +272,23 @@ function Viewmodel.update(dt, visible, moving, sprinting)
 
 	-- руки: ось -Y части направлена от плеча к кисти; поворот на ~78° вокруг X направляет руку вперёд
 	local rAim, lAim
+	-- руки подняты так, чтобы кисти всегда были в кадре
 	if kind == "spear" then
-		rAim = CFrame.Angles(math.rad(84), math.rad(-6), 0)
-		lAim = CFrame.Angles(math.rad(86), math.rad(18), 0)
+		rAim = CFrame.Angles(math.rad(92), math.rad(-6), 0)
+		lAim = CFrame.Angles(math.rad(94), math.rad(18), 0)
 	elseif kind == "fists" then
-		rAim = CFrame.Angles(math.rad(80), math.rad(-14), 0)
-		lAim = CFrame.Angles(math.rad(80), math.rad(14), 0)
+		rAim = CFrame.Angles(math.rad(96), math.rad(-14), 0)
+		lAim = CFrame.Angles(math.rad(96), math.rad(14), 0)
 	else
-		rAim = CFrame.Angles(math.rad(76), math.rad(-12), 0)
-		lAim = CFrame.Angles(math.rad(66), math.rad(20), 0)
+		rAim = CFrame.Angles(math.rad(92), math.rad(-14), 0)
+		lAim = CFrame.Angles(math.rad(86), math.rad(22), 0)
 	end
 	local rPush, lPush = push, CFrame.new()
 	if kind == "fists" and swingT and punchLeft then
 		rPush, lPush = CFrame.new(), push
 	end
-	local rShoulder = base * CFrame.new(1.05, -1.5, 0.25) * rPush * (kind == "fists" and CFrame.new() or rot) * rAim
-	local lShoulder = base * CFrame.new(-1.05, -1.55, 0.25) * lPush * (kind == "spear" and push or CFrame.new()) * lAim
+	local rShoulder = base * CFrame.new(1.0, -1.15, 0.35) * rPush * (kind == "fists" and CFrame.new() or rot) * rAim
+	local lShoulder = base * CFrame.new(-1.0, -1.2, 0.35) * lPush * (kind == "spear" and push or CFrame.new()) * lAim
 	local grip = placeArm("right", rShoulder)
 	placeArm("left", lShoulder)
 
