@@ -31,7 +31,7 @@ remotes.Parent = ReplicatedStorage
 local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
-	"Outro", "Dev", "Crouch", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect",
+	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -801,6 +801,34 @@ local function connectSessionPrompts(s)
 					addRes(p, "berry", 3)
 					notify(p, "+3 ягоды (H — съесть, лечит)")
 				end)
+			elseif CollectionService:HasTag(pr, "NotePrompt") then
+				pr.Triggered:Connect(function(p)
+					if sessionOf(p) == s then
+						R.Note:FireClient(p, pr:GetAttribute("Title") or "Записка", pr:GetAttribute("Text") or "")
+					end
+				end)
+			elseif CollectionService:HasTag(pr, "LootPrompt") then
+				pr.Triggered:Connect(function(p)
+					local st = state[p]
+					if not st or st.session ~= s then
+						return
+					end
+					if pr:GetAttribute("Looted") then
+						notify(p, "Пусто")
+						return
+					end
+					pr:SetAttribute("Looted", true)
+					pr.Enabled = false
+					local pool = { { "wood", 3, 6 }, { "stone", 3, 6 }, { "fiber", 2, 4 }, { "berry", 2, 3 }, { "bandage", 1, 1 }, { "iron", 1, 3 } }
+					local got = {}
+					for _ = 1, 2 do
+						local e = pool[math.random(1, #pool)]
+						local n = math.random(e[2], e[3])
+						addRes(p, e[1], n)
+						table.insert(got, "+" .. n .. " " .. Items.Resources[e[1]].Name)
+					end
+					notify(p, (pr.ObjectText ~= "" and pr.ObjectText or "Находка") .. ": " .. table.concat(got, ", "))
+				end)
 			elseif CollectionService:HasTag(pr, "FiberPrompt") then
 				pr.Triggered:Connect(function(p)
 					if sessionOf(p) ~= s then
@@ -1009,6 +1037,8 @@ local function startSession(riders, diffId)
 	s.clearing = World.BuildClearing(s.folder, seed, O)
 	s.gates = World.BuildClearingWalls(s.folder, O)
 	s.maze = World.BuildMaze(s.folder, seed + 7, O)
+	World.BuildWaterSurface(s.folder, O)
+	World.BuildOuterForest(s.folder, O, seed)
 	connectSessionPrompts(s)
 	for _, p in ipairs(riders) do
 		local st = state[p]
@@ -1085,6 +1115,8 @@ R.LiftSettings.OnServerEvent:Connect(function(p, action, value)
 				lift.max = math.clamp(math.floor(value), 1, Config.Elevator.MaxPlayers)
 			elseif action == "go" then
 				lift.goNow = true
+			elseif action == "diff" and typeof(value) == "string" and Config.Difficulty[value] then
+				lift.diff = value
 			end
 		end
 	end
@@ -1110,6 +1142,7 @@ task.spawn(function()
 					lift.host = inside[1]
 					lift.friendsOnly = false
 					lift.max = Config.Elevator.MaxPlayers
+					lift.diff = "normal"
 				end
 				-- кто не проходит по правилам — выходит из лифта
 				local allowed = {}
@@ -1137,9 +1170,9 @@ task.spawn(function()
 					lift.goNow = false
 				end
 				local left = lift.countdownEnd and math.max(0, math.ceil(lift.countdownEnd - os.clock())) or -1
-				local dname = Config.Difficulty[lift.id].Name
+				local dname = Config.Difficulty[lift.diff or "normal"].Name
 				if lift.label then
-					lift.label.Text = #allowed > 0 and (dname .. "  " .. #allowed .. "/" .. lift.max .. "  ·  " .. left .. "с") or dname
+					lift.label.Text = #allowed > 0 and (dname .. "  " .. #allowed .. "/" .. lift.max .. "  ·  " .. left .. "с") or "ЛИФТ"
 				end
 				for _, p in ipairs(Players:GetPlayers()) do
 					if table.find(allowed, p) then
@@ -1150,6 +1183,7 @@ task.spawn(function()
 						p:SetAttribute("LiftMax", lift.max)
 						p:SetAttribute("LiftCount", #allowed)
 						p:SetAttribute("LiftCountdown", left)
+						p:SetAttribute("LiftDiff", lift.diff or "normal")
 					elseif p:GetAttribute("LiftId") == lift.id then
 						p:SetAttribute("LiftId", nil)
 					end
@@ -1165,7 +1199,7 @@ task.spawn(function()
 						if hrp then
 							hrp.Anchored = true
 						end
-						R.PlayElevator:FireClient(p, allowed, Config.Elevator.RideTime, lift.id)
+						R.PlayElevator:FireClient(p, allowed, Config.Elevator.RideTime, lift.diff or "normal")
 					end
 					task.spawn(function()
 						task.wait(Config.Elevator.RideTime)
@@ -1176,7 +1210,7 @@ task.spawn(function()
 							end
 						end
 						if #riders > 0 then
-							startSession(riders, lift.id)
+							startSession(riders, lift.diff or "normal")
 						end
 						lift.riding = false
 					end)

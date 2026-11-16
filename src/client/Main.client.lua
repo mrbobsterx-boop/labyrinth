@@ -70,13 +70,26 @@ local trauma = 0
 local function shake(amount)
 	trauma = math.min(1, trauma + amount)
 end
+local appliedShake = CFrame.new()
+-- перед обновлением камеры убираем тряску прошлого кадра, иначе мышь «уплывает» и дёргается
+RunService:BindToRenderStep("LabyrinthUnshake", Enum.RenderPriority.Camera.Value - 1, function()
+	local cam = workspace.CurrentCamera
+	if appliedShake ~= CFrame.new() and cam.CameraType ~= Enum.CameraType.Scriptable then
+		cam.CFrame = cam.CFrame * appliedShake:Inverse()
+	end
+	appliedShake = CFrame.new()
+end)
 RunService:BindToRenderStep("LabyrinthShake", Enum.RenderPriority.Camera.Value + 1, function(dt)
 	if trauma > 0 then
 		local t = os.clock() * 30
 		local s = trauma * trauma
 		local cam = workspace.CurrentCamera
-		cam.CFrame = cam.CFrame * CFrame.Angles(math.noise(t, 1) * 0.06 * s, math.noise(t, 2) * 0.06 * s, math.noise(t, 3) * 0.04 * s)
-		trauma = math.max(0, trauma - dt * 1.6)
+		local sh = CFrame.Angles(math.noise(t, 1) * 0.05 * s, math.noise(t, 2) * 0.05 * s, math.noise(t, 3) * 0.03 * s)
+		cam.CFrame = cam.CFrame * sh
+		if cam.CameraType ~= Enum.CameraType.Scriptable then
+			appliedShake = sh
+		end
+		trauma = math.max(0, trauma - dt * 2)
 	end
 end)
 
@@ -722,31 +735,54 @@ end)
 local function buildHeli(cf)
 	local m = Instance.new("Model")
 	m.Name = "Helicopter"
-	local function p(size, rel, color, mat, shape)
+	local function p(size, rel, color, mat, extra)
 		local pt = make("Part", { Anchored = true, CanCollide = false, CanQuery = false, Size = size, Color = color, Material = mat or Enum.Material.SmoothPlastic }, m)
-		if shape then
-			pt.Shape = shape
+		if extra then
+			for k, v in pairs(extra) do
+				pt[k] = v
+			end
 		end
 		pt:SetAttribute("Rel", rel)
 		return pt
 	end
-	local body = RGB(40, 60, 45)
-	p(V(9, 7, 14), CFrame.new(0, 4.5, 0), body, Enum.Material.Metal)
-	p(V(8, 4.5, 5), CFrame.new(0, 5.5, -8), RGB(40, 60, 70), Enum.Material.Glass)
-	p(V(2.5, 2.5, 16), CFrame.new(0, 6, 15), body, Enum.Material.Metal)
-	p(V(0.6, 5, 3), CFrame.new(0, 9, 22), body, Enum.Material.Metal)
-	for _, x in ipairs({ -4, 4 }) do
-		p(V(0.6, 0.6, 16), CFrame.new(x, 0.3, 0), RGB(30, 30, 30), Enum.Material.Metal)
-		p(V(0.4, 2, 0.4), CFrame.new(x, 1.3, -4), RGB(30, 30, 30), Enum.Material.Metal)
-		p(V(0.4, 2, 0.4), CFrame.new(x, 1.3, 4), RGB(30, 30, 30), Enum.Material.Metal)
+	local white, red, dark, glass = RGB(232, 232, 236), RGB(200, 45, 40), RGB(35, 36, 40), RGB(60, 110, 140)
+	local M = Enum.Material
+	-- кабина: корпус, нос, стёкла, полосы
+	p(V(7.5, 6.5, 11), CFrame.new(0, 4.8, 0), white, M.SmoothPlastic)
+	p(V(7.6, 1, 11.1), CFrame.new(0, 3.2, 0), red, M.SmoothPlastic)
+	p(V(6.5, 5, 4), CFrame.new(0, 4.4, -7), white, M.SmoothPlastic)
+	p(V(6, 3, 0.3), CFrame.new(0, 5.6, -9.05), glass, M.Glass, { Transparency = 0.35 })
+	for _, x in ipairs({ -3.8, 3.8 }) do
+		p(V(0.2, 2.6, 3.6), CFrame.new(x, 5.8, -6.6), glass, M.Glass, { Transparency = 0.35 })
+		p(V(0.2, 2.6, 3.4), CFrame.new(x, 5.8, -1.5), glass, M.Glass, { Transparency = 0.35 })
+		p(V(0.25, 4.6, 3.6), CFrame.new(x, 4.6, 2.6), dark, M.Metal) -- проём двери
 	end
-	p(V(0.8, 1.5, 0.8), CFrame.new(0, 8.6, 0), RGB(30, 30, 30), Enum.Material.Metal)
+	p(V(5, 1.2, 6), CFrame.new(0, 8.4, 1), white, M.SmoothPlastic) -- двигатель
+	-- хвост
+	p(V(1.8, 1.8, 16), CFrame.new(0, 6.2, 13), white, M.SmoothPlastic)
+	p(V(1.85, 0.5, 16.1), CFrame.new(0, 6.6, 13), red, M.SmoothPlastic)
+	p(V(0.4, 5, 3), CFrame.new(0, 8.5, 20.5), white, M.SmoothPlastic)
+	p(V(5, 0.3, 2), CFrame.new(0, 6.4, 19), white, M.SmoothPlastic)
+	-- полозья
+	for _, x in ipairs({ -3.6, 3.6 }) do
+		p(V(0.5, 0.5, 15), CFrame.new(x, 0.3, 0), dark, M.Metal)
+		p(V(0.35, 1.8, 0.35), CFrame.new(x, 1.3, -3.5), dark, M.Metal)
+		p(V(0.35, 1.8, 0.35), CFrame.new(x, 1.3, 3.5), dark, M.Metal)
+	end
+	-- винты
+	p(V(0.8, 1.4, 0.8), CFrame.new(0, 9.6, 1), dark, M.Metal)
 	for k = 0, 1 do
-		local blade = p(V(36, 0.25, 1.4), CFrame.new(0, 9.4, 0), RGB(25, 25, 25), Enum.Material.Metal)
+		local blade = p(V(34, 0.2, 1.3), CFrame.new(0, 10.3, 1), dark, M.Metal)
 		blade:SetAttribute("Blade", k * math.pi / 2)
 	end
-	local lamp = p(V(1, 1, 0.4), CFrame.new(0, 3, -10.5), RGB(255, 250, 220), Enum.Material.Neon)
+	for k = 0, 1 do
+		local tb = p(V(0.15, 4.5, 0.5), CFrame.new(0.5, 8.6, 21.5), dark, M.Metal)
+		tb:SetAttribute("TailBlade", k * math.pi / 2)
+	end
+	local lamp = p(V(0.8, 0.8, 0.3), CFrame.new(0, 2.8, -9.1), RGB(255, 250, 220), M.Neon)
 	make("SpotLight", { Face = Enum.NormalId.Front, Range = 60, Angle = 50, Brightness = 4 }, lamp)
+	local beacon = p(V(0.5, 0.5, 0.5), CFrame.new(0, 8.4, 20.5), RGB(255, 40, 40), M.Neon)
+	local _ = beacon
 	m.Parent = workspace
 	local spin = 0
 	local function setCF(c, dt)
@@ -755,7 +791,14 @@ local function buildHeli(cf)
 			if d:IsA("BasePart") then
 				local rel = d:GetAttribute("Rel")
 				local b = d:GetAttribute("Blade")
-				d.CFrame = c * rel * (b and CFrame.Angles(0, spin + b, 0) or CFrame.new())
+				local tb = d:GetAttribute("TailBlade")
+				if b then
+					d.CFrame = c * rel * CFrame.Angles(0, spin + b, 0)
+				elseif tb then
+					d.CFrame = c * rel * CFrame.Angles(spin * 1.5 + tb, 0, 0)
+				else
+					d.CFrame = c * rel
+				end
 			end
 		end
 	end
@@ -834,8 +877,9 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	for _, f in ipairs(friends) do
 		f.m:Destroy()
 	end
-	local seat = CFrame.new(0, 5.6, 2)
-	cam.CFrame = heliCF * seat * CFrame.Angles(0, math.pi / 2, 0)
+	-- место у открытой боковой двери: камера снаружи корпуса, винт выше кадра
+	local seat = CFrame.new(5.4, 4.6, 2.6)
+	cam.CFrame = CFrame.lookAt((heliCF * seat).Position, (heliCF * CFrame.new(30, 2, 2.6)).Position)
 	TweenService:Create(fade, TweenInfo.new(0.6), { BackgroundTransparency = 1 }):Play()
 
 	-- 4. взлёт: поднимаемся высоко над лабиринтом и смотрим на него целиком
@@ -845,10 +889,11 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	runFor(liftTime, function(a)
 		local e = a * a * (3 - 2 * a)
 		local pos = heliCF.Position:Lerp(high, e)
-		local hc = CFrame.lookAt(pos, pos + (mazeCenter - heliCF.Position) * V(1, 0, 1)) * CFrame.Angles(-0.12 * math.sin(a * math.pi), 0, 0)
+		local toMaze = (mazeCenter - pos) * V(1, 0, 1)
+		local hc = CFrame.lookAt(pos, pos + V(toMaze.Z, 0, -toMaze.X)) * CFrame.Angles(-0.08 * math.sin(a * math.pi), 0, 0)
 		setCF(hc, 1 / 60)
-		local eye = hc.Position + V(0, 6, 0)
-		cam.CFrame = CFrame.lookAt(eye, mazeCenter:Lerp(eye, 0.05) - V(0, 0, 0)) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
+		local eye = (hc * seat).Position
+		cam.CFrame = CFrame.lookAt(eye, mazeCenter) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
 	end)
 	task.wait(2.5)
 
@@ -858,9 +903,9 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	away = away.Magnitude > 1 and away.Unit or V(1, 0, 0)
 	runFor(5, function(a)
 		local pos = high + away * 600 * a * a + V(0, 60 * a, 0)
-		local hc = CFrame.lookAt(pos, pos + away)
+		local hc = CFrame.lookAt(pos, pos + V(-away.Z, 0, away.X))
 		setCF(hc, 1 / 60)
-		cam.CFrame = CFrame.lookAt(pos + V(0, 6, 0) - away * 2, mazeCenter)
+		cam.CFrame = CFrame.lookAt((hc * seat).Position, mazeCenter)
 	end)
 	rotor:Destroy()
 	for _, d in ipairs(temp) do
@@ -959,7 +1004,7 @@ local coinsLabel = make("TextLabel", {
 corner(coinsLabel, 8)
 
 -- окно лифта
-local liftPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 150), Size = UDim2.new(0, 420, 0, 190), BackgroundColor3 = RGB(18, 20, 22), BackgroundTransparency = 0.15, Visible = false }, gui)
+local liftPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.45, 0), Size = UDim2.new(0, 460, 0, 230), BackgroundColor3 = RGB(18, 20, 22), BackgroundTransparency = 0.15, Visible = false }, gui)
 corner(liftPanel, 12)
 local liftTitle = make("TextLabel", { Position = UDim2.new(0, 14, 0, 8), Size = UDim2.new(1, -28, 0, 34), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 22, TextColor3 = RGB(240, 230, 200), Text = "" }, liftPanel)
 local liftInfo = make("TextLabel", { Position = UDim2.new(0, 14, 0, 42), Size = UDim2.new(1, -28, 0, 24), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 16, TextColor3 = RGB(200, 200, 190), Text = "" }, liftPanel)
@@ -969,7 +1014,18 @@ local function liftBtn(text, x, w, fn)
 	b.MouseButton1Click:Connect(fn)
 	return b
 end
-local hostRow = make("Frame", { Position = UDim2.new(0, 14, 0, 76), Size = UDim2.new(1, -28, 0, 40), BackgroundTransparency = 1 }, liftPanel)
+local diffRow = make("Frame", { Position = UDim2.new(0, 14, 0, 72), Size = UDim2.new(1, -28, 0, 40), BackgroundTransparency = 1 }, liftPanel)
+local diffButtons = {}
+for i, id in ipairs({ "easy", "normal", "hard" }) do
+	local d = Config.Difficulty[id]
+	local b = make("TextButton", { Position = UDim2.new((i - 1) / 3, 2, 0, 0), Size = UDim2.new(1 / 3, -4, 1, 0), BackgroundColor3 = RGB(50, 54, 58), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(d.Color[1], d.Color[2], d.Color[3]), Text = d.Name }, diffRow)
+	corner(b, 8)
+	b.MouseButton1Click:Connect(function()
+		remote("LiftSettings"):FireServer("diff", id)
+	end)
+	diffButtons[id] = b
+end
+local hostRow = make("Frame", { Position = UDim2.new(0, 14, 0, 120), Size = UDim2.new(1, -28, 0, 40), BackgroundTransparency = 1 }, liftPanel)
 local friendsB = liftBtn("Только друзья: ВЫКЛ", 0, 180, function()
 	remote("LiftSettings"):FireServer("friends", not player:GetAttribute("LiftFriends"))
 end)
@@ -983,7 +1039,7 @@ local plusB = liftBtn("+", 352, 40, function()
 	remote("LiftSettings"):FireServer("max", (player:GetAttribute("LiftMax") or 5) + 1)
 end)
 plusB.Parent = hostRow
-local goB = make("TextButton", { Position = UDim2.new(0, 14, 0, 128), Size = UDim2.new(1, -28, 0, 46), BackgroundColor3 = RGB(60, 120, 60), Font = UI_FONT, TextSize = 18, TextColor3 = RGB(255, 255, 255), Text = "ЕХАТЬ СЕЙЧАС" }, liftPanel)
+local goB = make("TextButton", { Position = UDim2.new(0, 14, 0, 170), Size = UDim2.new(1, -28, 0, 46), BackgroundColor3 = RGB(60, 120, 60), Font = UI_FONT, TextSize = 18, TextColor3 = RGB(255, 255, 255), Text = "ЕХАТЬ СЕЙЧАС" }, liftPanel)
 corner(goB, 8)
 goB.MouseButton1Click:Connect(function()
 	remote("LiftSettings"):FireServer("go")
@@ -995,15 +1051,19 @@ local function updateLiftPanel()
 	if not liftPanel.Visible then
 		return
 	end
-	local d = Config.Difficulty[id]
-	liftTitle.Text = "ЛИФТ · " .. d.Name
+	local d = Config.Difficulty[player:GetAttribute("LiftDiff") or "normal"]
+	liftTitle.Text = "ЛИФТ · сложность: " .. d.Name
 	liftTitle.TextColor3 = RGB(d.Color[1], d.Color[2], d.Color[3])
 	local cd = player:GetAttribute("LiftCountdown") or -1
 	liftInfo.Text = "Игроков: " .. (player:GetAttribute("LiftCount") or 1) .. "/" .. (player:GetAttribute("LiftMax") or 5) .. "   ·   отправление через " .. math.max(0, cd) .. " с"
 	local host = player:GetAttribute("LiftHost") == true
 	hostRow.Visible = host
+	diffRow.Visible = host
 	goB.Visible = host
-	liftPanel.Size = UDim2.new(0, 420, 0, host and 190 or 76)
+	liftPanel.Size = UDim2.new(0, 460, 0, host and 230 or 76)
+	for did, b in pairs(diffButtons) do
+		b.BackgroundColor3 = (player:GetAttribute("LiftDiff") == did) and RGB(80, 86, 92) or RGB(36, 38, 42)
+	end
 	friendsB.Text = player:GetAttribute("LiftFriends") and "Только друзья: ВКЛ" or "Только друзья: ВЫКЛ"
 	maxLabel.Text = "Максимум: " .. (player:GetAttribute("LiftMax") or 5)
 	if not host then
@@ -1052,6 +1112,23 @@ remote("ShopOpen").OnClientEvent:Connect(function()
 	shopPanel.Visible = true
 end)
 
+-- записки
+local notePanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 460, 0, 380), BackgroundColor3 = RGB(226, 214, 186), Visible = false, ZIndex = 14 }, gui)
+corner(notePanel, 4)
+local noteTitle = make("TextLabel", { Position = UDim2.new(0, 22, 0, 16), Size = UDim2.new(1, -44, 0, 32), BackgroundTransparency = 1, Font = Enum.Font.Merriweather, TextSize = 24, TextColor3 = RGB(70, 40, 25), Text = "", ZIndex = 14 }, notePanel)
+local noteBody = make("TextLabel", { Position = UDim2.new(0, 26, 0, 60), Size = UDim2.new(1, -52, 1, -130), BackgroundTransparency = 1, Font = Enum.Font.Merriweather, TextSize = 19, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextColor3 = RGB(45, 32, 25), Text = "", ZIndex = 14 }, notePanel)
+local noteClose = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -16), Size = UDim2.new(0, 150, 0, 38), BackgroundColor3 = RGB(80, 50, 35), Font = UI_FONT, TextSize = 17, TextColor3 = RGB(250, 240, 225), Text = "Закрыть", Modal = true, ZIndex = 14 }, notePanel)
+corner(noteClose, 6)
+noteClose.MouseButton1Click:Connect(function()
+	notePanel.Visible = false
+end)
+remote("Note").OnClientEvent:Connect(function(title, text)
+	noteTitle.Text = title
+	noteBody.Text = text
+	notePanel.Visible = true
+	sound(Config.Sounds.Click, 0.4, 0.7)
+end)
+
 -- ранение
 local downedPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(90, 0, 0), BackgroundTransparency = 0.6, Visible = false, ZIndex = 6 }, gui)
 local downedText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.4), Size = UDim2.new(0.8, 0, 0, 120), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = RGB(255, 230, 220), TextStrokeTransparency = 0.3, Text = "", ZIndex = 6 }, downedPanel)
@@ -1088,11 +1165,8 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 
 	-- лобби
-	titleLabel.Visible = not inMatch() and not cutscene
-	if not inMatch() and not cutscene then
-		lobbyLabel.Text = player:GetAttribute("LiftId") and "" or "Выбери лифт: ЛЕГКО · ОБЫЧНО · ТЯЖЕЛО"
-		lobbyLabel.TextSize = 22
-	elseif not cutscene then
+	titleLabel.Visible = false
+	if not cutscene then
 		lobbyLabel.Text = ""
 	end
 	updateLiftPanel()
@@ -1119,7 +1193,7 @@ RunService.RenderStepped:Connect(function(dt)
 	applyLighting(inMatch() and phase or nil, math.clamp(elapsed / pLen, 0, 1))
 
 	-- курсор только в меню
-	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or cursorForced()
+	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or notePanel.Visible or cursorForced()
 
 	-- ранение
 	local downed = player:GetAttribute("Downed") == true
@@ -1160,9 +1234,7 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 		stFill.Size = UDim2.fromScale(stamina / staminaMax(), 1)
 		vmState.visible, vmState.moving, vmState.sprinting = playing, moving, sprinting
-		if sprinting then
-			trauma = math.max(trauma, 0.08)
-		end
+
 	else
 		vmState.visible = false
 	end

@@ -197,8 +197,7 @@ function World.BuildLobby()
 
 	local elevators = {}
 	for _, l in ipairs(lifts) do
-		local d = Config.Difficulty[l.id]
-		local col = RGB(d.Color[1], d.Color[2], d.Color[3])
+		local col = RGB(230, 220, 190)
 		local x = l.x
 		Parts.span(m, "LiftFloor", o, V(x - 9, -1, -45), V(x + 9, 0, -27), RGB(40, 40, 42), M.DiamondPlate)
 		Parts.span(m, "LiftWall", o, V(x - 9.5, 0, -45), V(x - 9, 20, -27), METAL, M.DiamondPlate)
@@ -219,7 +218,7 @@ function World.BuildLobby()
 		t.Font = Enum.Font.GothamBlack
 		t.TextScaled = true
 		t.TextColor3 = col
-		t.Text = d.Name
+		t.Text = "ЛИФТ"
 		t.Parent = sg
 		for k = -3, 3 do
 			Parts.span(m, "Hazard", o, V(x + k * 2 - 0.5, 0, -27), V(x + k * 2 + 0.5, 0.05, -25), (k % 2 == 0) and RGB(220, 180, 30) or RGB(20, 20, 20), M.SmoothPlastic)
@@ -322,38 +321,166 @@ local function distToWater(p)
 	return best
 end
 
+local function safe(fn)
+	local ok, err = pcall(fn)
+	if not ok then
+		warn("[Labyrinth] рельеф:", err)
+	end
+end
+
 function World.BuildTerrain(O)
 	local terrain = workspace.Terrain
-	local size = HALF * 2 + 300
-	terrain:FillBlock(CFrame.new(O + V(0, -8, 0)), V(size, 16, size), M.Ground)
-	terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(CLEAR_HALF * 2, 4, CLEAR_HALF * 2), M.Grass)
-	-- большое озеро с песчаным пляжем
-	terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -2, 0)), 4, SAND_R, M.Sand)
-	terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -8, 0)), 16, LAKE_R, M.Water)
-	-- река: сначала песчаный берег, потом вода до уровня земли
+	local size = HALF * 2 + 700
+	-- снаружи лабиринта трава (там лес), внутри коридоров — утоптанная земля
+	safe(function()
+		terrain:FillBlock(CFrame.new(O + V(0, -8, 0)), V(size, 16, size), M.Grass)
+	end)
+	safe(function()
+		terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(HALF * 2 + 8, 4, HALF * 2 + 8), M.Ground)
+	end)
+	safe(function()
+		terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(CLEAR_HALF * 2, 4, CLEAR_HALF * 2), M.Grass)
+	end)
+	-- озеро: песчаный пляж, выемка и вода
+	safe(function()
+		terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -2, 0)), 4, SAND_R, M.Sand)
+	end)
+	safe(function()
+		terrain:FillCylinder(CFrame.new(O + LAKE + V(0, 0, 0)), 6, LAKE_R, M.Air)
+	end)
+	safe(function()
+		terrain:FillCylinder(CFrame.new(O + LAKE + V(0, -9, 0)), 16, LAKE_R, M.Water)
+	end)
+	-- река
 	for k = 1, #RIVER - 1 do
 		local a, b = O + RIVER[k], O + RIVER[k + 1]
 		local mid = (a + b) / 2
 		local len = (b - a).Magnitude + 8
 		local cf = CFrame.lookAt(mid, mid + (b - a))
-		terrain:FillBlock(cf * CFrame.new(0, -2, 0), V(26, 4, len), M.Sand)
-		terrain:FillBlock(cf * CFrame.new(0, -5, 0), V(16, 10, len), M.Water)
+		safe(function()
+			terrain:FillBlock(cf * CFrame.new(0, -2, 0), V(26, 4, len), M.Sand)
+		end)
+		safe(function()
+			terrain:FillBlock(cf * CFrame.new(0, 0, 0), V(16, 6, len), M.Air)
+		end)
+		safe(function()
+			terrain:FillBlock(cf * CFrame.new(0, -6, 0), V(16, 10, len), M.Water)
+		end)
 	end
-	if not terrain:FindFirstChildOfClass("Clouds") then
-		local clouds = Instance.new("Clouds")
-		clouds.Cover = 0.55
-		clouds.Density = 0.6
-		clouds.Parent = terrain
+	safe(function()
+		if not terrain:FindFirstChildOfClass("Clouds") then
+			local clouds = Instance.new("Clouds")
+			clouds.Cover = 0.55
+			clouds.Density = 0.6
+			clouds.Parent = terrain
+		end
+		terrain.WaterColor = RGB(40, 100, 115)
+		terrain.WaterTransparency = 0.5
+		terrain.WaterWaveSize = 0.12
+		terrain.WaterReflectance = 0.7
+	end)
+end
+
+-- поверхность воды из деталей: видна, даже если вода рельефа не появилась
+function World.BuildWaterSurface(parent, O)
+	local m = Instance.new("Model")
+	m.Name = "WaterSurface"
+	local water = RGB(45, 110, 125)
+	local props = { CanCollide = false, CanQuery = false, Transparency = 0.25, Reflectance = 0.25, CastShadow = false }
+	Parts.box(m, "Lake", CFrame.new(O + LAKE + V(0, -1.2, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.4, LAKE_R * 2, LAKE_R * 2), water, M.Glass, {
+		Shape = Enum.PartType.Cylinder,
+		CanCollide = false,
+		CanQuery = false,
+		Transparency = 0.25,
+		Reflectance = 0.25,
+		CastShadow = false,
+	})
+	for k = 1, #RIVER - 1 do
+		local a, b = O + RIVER[k], O + RIVER[k + 1]
+		local mid = (a + b) / 2
+		Parts.box(m, "River", CFrame.lookAt(mid, mid + (b - a)) * CFrame.new(0, -1.2, 0), V(15, 0.4, (b - a).Magnitude + 6), water, M.Glass, props)
 	end
-	terrain.WaterColor = RGB(40, 90, 100)
-	terrain.WaterTransparency = 0.6
-	terrain.WaterWaveSize = 0.1
-	terrain.WaterReflectance = 0.6
+	m.Parent = parent
+end
+
+-- лес вокруг всего лабиринта (виден с вертолёта)
+function World.BuildOuterForest(parent, O, seed)
+	local m = Instance.new("Model")
+	m.Name = "OuterForest"
+	local rng = Random.new(seed + 5)
+	local placed, tries = 0, 0
+	while placed < 320 and tries < 3000 do
+		tries += 1
+		local x, z = rng:NextNumber(-HALF - 260, HALF + 260), rng:NextNumber(-HALF - 260, HALF + 260)
+		if math.max(math.abs(x), math.abs(z)) > HALF + 22 then
+			placed += 1
+			local p = O + V(x, 0, z)
+			local h = rng:NextNumber(30, 50)
+			Parts.box(m, "Trunk", CFrame.new(p + V(0, h / 2, 0)), V(3, h, 3), RGB(78, 56, 38), M.Wood)
+			local leaf = RGB(rng:NextInteger(34, 52), rng:NextInteger(80, 108), rng:NextInteger(36, 50))
+			local s1 = rng:NextNumber(16, 22)
+			Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.75, 0)), V(s1, s1 * 0.85, s1), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+			Parts.box(m, "Crown", CFrame.new(p + V(rng:NextNumber(-3, 3), h * 0.95, rng:NextNumber(-3, 3))), V(s1 * 0.7, s1 * 0.6, s1 * 0.7), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+		end
+	end
+	m.Parent = parent
 end
 
 function World.ClearTerrain(O)
-	local size = HALF * 2 + 320
+	local size = HALF * 2 + 720
 	workspace.Terrain:FillBlock(CFrame.new(O + V(0, -6, 0)), V(size, 20, size), M.Air)
+end
+
+------------------------------------------------------------------
+-- Записки прошлых выживших и заброшенные лагеря
+------------------------------------------------------------------
+local NOTES = {
+	{ "Дневник, день 3", "Стены не двигаются. Я проверил: зарубки на камне те же. Это мы теряем рассудок, а не лабиринт меняется." },
+	{ "Нацарапано углём", "НЕ БЕГИТЕ НОЧЬЮ. Они слышат шаги. Идите тихо — и, может быть, доживёте до утра." },
+	{ "Обрывок карты", "Выход есть! Огромные ворота у самой внешней стены. Но без ключ-карты они не откроются." },
+	{ "Записка шахтёра", "Камень — деревянной киркой. Железо — только каменной. Кристаллы светятся в самых дальних шахтах, нужна железная." },
+	{ "Медицинская памятка", "Если друг упал — не бросай его. Три пучка высокой травы — и у тебя бинт. Подними его, пока не поздно." },
+	{ "Подпись: М.", "Скрежетники огромные. В узкие щели в стенах они не пролезают. Пригнись (Ctrl) — и ты спасён." },
+	{ "Дрожащий почерк", "Вчера ночью я слышал вертолёт за стеной. Значит, снаружи кто-то есть. Значит, отсюда можно выбраться." },
+	{ "Список", "Нас было пятеро. Осталось двое. Мы больше не ходим в лабиринт после того, как солнце касается стен." },
+	{ "Правило поляны", "Пока врата закрыты — поляна безопасна. Опоздал хоть на секунду — ночуешь с ними." },
+	{ "Чья-то догадка", "Каждый раз, когда приезжает лифт, коридоры другие. Карты бесполезны. Запоминай приметы: мох, кости, шахты." },
+	{ "Рецепт", "Верстак — двенадцать брёвен и четыре камня. Без него не будет ни мечей, ни нормальной кирки." },
+	{ "Последняя запись", "Золотой сундук. Самый дальний тупик. Над ним светится ключ. Я почти дошёл, но стемнело..." },
+}
+
+local function note(parent, cf, rng, index)
+	local n = NOTES[(index - 1) % #NOTES + 1]
+	local paper = Parts.box(parent, "Note", cf, V(1.2, 0.05, 1.6), RGB(230, 220, 190), M.SmoothPlastic, NOCOLLIDE)
+	paper.CanQuery = true
+	local p = prompt(paper, "Прочитать", "Записка", 0, 8)
+	p:SetAttribute("Title", n[1])
+	p:SetAttribute("Text", n[2])
+	tag(p, "NotePrompt")
+	local _ = rng
+	return paper
+end
+
+local function lootCrate(parent, pos, rng, name)
+	local crate = Parts.box(parent, name or "SupplyBox", CFrame.new(pos + V(0, 1.1, 0)) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), V(2.6, 2.2, 2.2), RGB(115, 90, 58), M.WoodPlanks)
+	local p = prompt(crate, "Обыскать", name == "Backpack" and "Рюкзак" or "Ящик", 0.8, 9)
+	tag(p, "LootPrompt")
+	return crate
+end
+
+-- заброшенный лагерь: палатка, потухший костёр, рюкзак, записка
+local function camp(parent, center, rng, noteIndex)
+	local base = CFrame.new(center) * CFrame.Angles(0, rng:NextNumber(0, 6), 0)
+	local cloth = RGB(rng:NextInteger(90, 140), rng:NextInteger(70, 100), 50)
+	for _, side in ipairs({ -1, 1 }) do
+		Parts.box(parent, "Tent", base * CFrame.new(side * 2.2, 2.3, -4) * CFrame.Angles(0, 0, side * math.rad(-40)), V(0.2, 6, 7), cloth, M.Fabric)
+	end
+	Parts.box(parent, "AshPit", base * CFrame.new(3, 0.15, 3), V(3, 0.3, 3), RGB(40, 36, 34), M.Slate, NOCOLLIDE)
+	for k = 0, 3 do
+		Parts.box(parent, "BurntLog", base * CFrame.new(3, 0.4, 3) * CFrame.Angles(0, k * math.pi / 4, math.pi / 2), V(0.6, 2.6, 0.6), RGB(30, 26, 24), M.Wood, NOCOLLIDE)
+	end
+	lootCrate(parent, (base * CFrame.new(-3, 0, 2)).Position, rng, "Backpack")
+	note(parent, base * CFrame.new(0.5, 0.1, 1) * CFrame.Angles(0, 0.4, 0), rng, noteIndex)
 end
 
 ------------------------------------------------------------------
@@ -409,6 +536,7 @@ function World.BuildClearing(parent, seed, O)
 	-- ящик с припасами у лифта
 	local crate = Parts.span(m, "SupplyCrate", O, V(-20, 0, -16), V(-14, 3.5, -11), RGB(120, 95, 60), M.WoodPlanks)
 	refs.supplyPrompt = prompt(crate, "Взять припасы", "Начальные ресурсы", 0, 10)
+	note(m, CFrame.new(O + V(-17, 3.6, -13.5)), rng, 9)
 
 	-- костёр с брёвнами вокруг
 	local fc = O + V(34, 0, 34)
@@ -634,6 +762,7 @@ end
 local function chest(parent, pos, facing, golden)
 	local m = Instance.new("Model")
 	m.Name = golden and "GoldenChest" or "Chest"
+	pos = pos + V(0, 0.4, 0)
 	local b = CFrame.lookAt(pos, pos + facing)
 	local wood = golden and RGB(90, 60, 30) or RGB(100, 70, 40)
 	local trim = golden and RGB(230, 180, 60) or RGB(70, 70, 74)
@@ -791,7 +920,7 @@ function World.BuildMaze(parent, seed, O)
 				local up = math.sin(a) * 5.2
 				local face = fixed + side * (T / 2 + 0.25)
 				local p = axis == "X" and V(mid + along, up, face) or V(face, up, mid + along)
-				Parts.box(m, "CrackStone", CFrame.new(O + p) * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), rng:NextNumber(0, 3)), V(rng:NextNumber(1.2, 2), rng:NextNumber(1, 1.6), rng:NextNumber(0.8, 1.2)), WALL_DARK, M.Slate, NOCOLLIDE)
+				Parts.box(m, "CrackStone", CFrame.new(O + p) * CFrame.Angles(0, 0, rng:NextNumber(-0.6, 0.6)), axis == "X" and V(rng:NextNumber(0.8, 1.2), rng:NextNumber(0.6, 0.9), 0.5) or V(0.5, rng:NextNumber(0.6, 0.9), rng:NextNumber(0.8, 1.2)), WALL, M.Slate, NOCOLLIDE)
 			end
 			local mp = axis == "X" and V(mid, 0.1, fixed + side * (T / 2 + 1.5)) or V(fixed + side * (T / 2 + 1.5), 0.1, mid)
 			Parts.box(m, "CrackMoss", CFrame.new(O + mp), axis == "X" and V(7, 0.2, 2.5) or V(2.5, 0.2, 7), IVY, M.LeafyGrass, NOCOLLIDE)
@@ -945,6 +1074,22 @@ function World.BuildMaze(parent, seed, O)
 		tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
 	end
 
+	-- лагеря прошлых выживших, ящики и записки
+	for k = 1, 8 do
+		local p = refs.cells[rng:NextInteger(1, #refs.cells)]
+		if (p - O).Magnitude > CLEAR_HALF + 60 then
+			camp(m, p, rng, k)
+		end
+	end
+	for _ = 1, 26 do
+		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-9, 9), 0, rng:NextNumber(-9, 9))
+		lootCrate(m, p, rng)
+	end
+	for k = 9, 16 do
+		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-8, 8), 0.1, rng:NextNumber(-8, 8))
+		note(m, CFrame.new(p) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), rng, k)
+	end
+
 	-- выход и вертолётная площадка за ним
 	if exitCell then
 		local i, j = exitCell[1], exitCell[2]
@@ -991,8 +1136,6 @@ function World.BuildMaze(parent, seed, O)
 
 		-- снаружи: лесная поляна, где ждёт вертолёт
 		local pad = b * CFrame.new(0, 0, -95)
-		local padGround = Parts.box(m, "ForestClearing", pad * CFrame.new(0, 0.05, 0), V(60, 0.1, 60), RGB(70, 105, 55), M.Grass, NOCOLLIDE)
-		local _ = padGround
 		local frng = Random.new(seed + 99)
 		for _ = 1, 70 do
 			local a = frng:NextNumber(0, math.pi * 2)
