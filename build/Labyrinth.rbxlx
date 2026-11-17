@@ -1071,7 +1071,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
-	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -1140,32 +1140,66 @@ local function syncProfile(p)
 	p:SetAttribute("OwnedClasses", HttpService:JSONEncode(pr.owned))
 end
 
-local function saveProfile(p)
+-- сохранение: несколько попыток; если профиль не загрузился — НЕ сохраняем,
+-- чтобы не затереть монеты и классы игрока нулями
+local function saveProfile(p, wait)
 	local pr = profiles[p]
-	if pr and profileStore then
-		task.spawn(function()
-			pcall(function()
-				profileStore:SetAsync("u" .. p.UserId, HttpService:JSONEncode(pr))
+	if not pr or not profileStore or pr.loadFailed then
+		return
+	end
+	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class })
+	local key = "u" .. p.UserId
+	local function run()
+		for attempt = 1, 3 do
+			local ok = pcall(function()
+				profileStore:SetAsync(key, data)
 			end)
-		end)
+			if ok then
+				pr.dirty = false
+				return
+			end
+			task.wait(2 * attempt)
+		end
+		warn("[Labyrinth] не удалось сохранить профиль", p.Name)
+	end
+	if wait then
+		run()
+	else
+		task.spawn(run)
 	end
 end
 
 local function loadProfile(p)
 	local pr = { coins = 0, owned = { "none" }, class = "none" }
 	if profileStore then
-		local ok, json = pcall(function()
-			return profileStore:GetAsync("u" .. p.UserId)
-		end)
-		if ok and typeof(json) == "string" then
-			local ok2, data = pcall(function()
-				return HttpService:JSONDecode(json)
+		local loaded = false
+		for attempt = 1, 3 do
+			local ok, json = pcall(function()
+				return profileStore:GetAsync("u" .. p.UserId)
 			end)
-			if ok2 and typeof(data) == "table" then
-				pr.coins = tonumber(data.coins) or 0
-				pr.owned = typeof(data.owned) == "table" and data.owned or { "none" }
-				pr.class = typeof(data.class) == "string" and data.class or "none"
+			if ok then
+				loaded = true
+				if typeof(json) == "string" then
+					local ok2, data = pcall(function()
+						return HttpService:JSONDecode(json)
+					end)
+					if ok2 and typeof(data) == "table" then
+						pr.coins = tonumber(data.coins) or 0
+						pr.owned = typeof(data.owned) == "table" and data.owned or { "none" }
+						pr.class = typeof(data.class) == "string" and data.class or "none"
+					end
+				end
+				break
 			end
+			task.wait(2 * attempt)
+		end
+		if not loaded then
+			pr.loadFailed = true
+			task.delay(3, function()
+				if p.Parent then
+					R.Notify:FireClient(p, "Не удалось загрузить сохранение. Монеты в этот раз не сохранятся — перезайди позже.")
+				end
+			end)
 		end
 	end
 	profiles[p] = pr
@@ -1176,10 +1210,38 @@ local function addCoins(p, n)
 	local pr = profiles[p]
 	if pr then
 		pr.coins += n
+		pr.dirty = true
 		syncProfile(p)
-		saveProfile(p)
 	end
 end
+
+-- автосохранение раз в минуту (только у кого что-то поменялось)
+task.spawn(function()
+	while true do
+		task.wait(60)
+		for p, pr in pairs(profiles) do
+			if pr.dirty and p.Parent then
+				saveProfile(p)
+			end
+		end
+	end
+end)
+
+-- сервер выключается (например, вышло обновление) — сохраняем всех
+game:BindToClose(function()
+	local left = 0
+	for p in pairs(profiles) do
+		left += 1
+		task.spawn(function()
+			saveProfile(p, true)
+			left -= 1
+		end)
+	end
+	local t0 = os.clock()
+	while left > 0 and os.clock() - t0 < 25 do
+		task.wait(0.2)
+	end
+end)
 
 ------------------------------------------------------------------
 -- Игроки и инвентарь
@@ -1205,6 +1267,7 @@ local function notifySession(s, text)
 end
 
 local updateHeld
+local applyInvisible
 local function addRes(p, k, n)
 	local st = state[p]
 	st.res[k] = math.max(0, (st.res[k] or 0) + n)
@@ -3232,6 +3295,9 @@ local function onCharacter(p, char)
 	p:SetAttribute("Crouched", false)
 	task.delay(0.5, function()
 		armorVisual(p)
+		if p:GetAttribute("Invisible") then
+			applyInvisible(p)
+		end
 	end)
 	p:SetAttribute("Hidden", false)
 	p:SetAttribute("Sleeping", false)
@@ -3278,25 +3344,251 @@ end)
 ------------------------------------------------------------------
 -- Тестовые кнопки
 ------------------------------------------------------------------
--- админ-панель: код проверяется только на сервере
-local ADMIN_CODE = "2436"
+-- админ-панель: коды проверяются только на сервере
+-- 2436 — главная (владелец, уровень 2), 6363 — для друзей (уровень 1)
+local ADMIN_CODES = { ["2436"] = 2, ["6363"] = 1 }
 local adminTries = {}
 R.Admin.OnServerEvent:Connect(function(p, code)
 	local n = (adminTries[p] or 0) + 1
 	adminTries[p] = n
-	if n > 10 then
+	if n > 10 or typeof(code) ~= "string" then
 		return
 	end
-	if typeof(code) == "string" and code:gsub("%s", "") == ADMIN_CODE then
-		p:SetAttribute("Admin", true)
+	local lvl = ADMIN_CODES[code:gsub("%s", "")]
+	if lvl and lvl > (p:GetAttribute("Admin") or 0) then
+		p:SetAttribute("Admin", lvl)
 	end
 end)
 
+------------------------------------------------------------------
+-- Приколы главной админки
+------------------------------------------------------------------
+-- невидимость: ни тела, ни ника, монстры не трогают
+function applyInvisible(p)
+	local char = p.Character
+	if not char then
+		return
+	end
+	local on = p:GetAttribute("Invisible") == true
+	for _, d in ipairs(char:GetDescendants()) do
+		if d:IsA("BasePart") or d:IsA("Decal") then
+			if d:GetAttribute("T0") == nil then
+				d:SetAttribute("T0", d.Transparency)
+			end
+			d.Transparency = on and 1 or d:GetAttribute("T0")
+		end
+	end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.DisplayDistanceType = on and Enum.HumanoidDisplayDistanceType.None or Enum.HumanoidDisplayDistanceType.Viewer
+		hum.NameDisplayDistance = on and 0 or 100
+	end
+	p:SetAttribute("DevGhost", on)
+end
+
+-- центр «главного острова»: поляна сессии админа или лобби
+local function prankTarget(p)
+	local s = sessionOf(p)
+	if s then
+		return s.O, s.players, s
+	end
+	local list = {}
+	for _, q in ipairs(Players:GetPlayers()) do
+		if not sessionOf(q) then
+			table.insert(list, q)
+		end
+	end
+	return World.LOBBY, list, nil
+end
+
+local function prankAll(list, kind, msg)
+	for _, q in ipairs(list) do
+		R.Prank:FireClient(q, kind)
+		if msg then
+			notify(q, msg)
+		end
+	end
+end
+
+local function nuke(p)
+	local center, list = prankTarget(p)
+	prankAll(list, "siren", "☢ ВНИМАНИЕ! ЯДЕРНЫЙ УДАР ЧЕРЕЗ 5 СЕКУНД! ☢")
+	local folder = Instance.new("Folder")
+	folder.Name = "Nuke"
+	folder.Parent = workspace
+	local rocket = Instance.new("Part")
+	rocket.Anchored = true
+	rocket.CanCollide = false
+	rocket.Size = V(3, 12, 3)
+	rocket.Color = Color3.fromRGB(60, 70, 60)
+	rocket.Material = Enum.Material.Metal
+	rocket.CFrame = CFrame.new(center + V(0, 500, 0))
+	rocket.Parent = folder
+	local fireTail = Instance.new("Fire")
+	fireTail.Size = 8
+	fireTail.Parent = rocket
+	TweenService:Create(rocket, TweenInfo.new(5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = CFrame.new(center + V(0, 8, 0)) }):Play()
+	task.delay(5, function()
+		rocket:Destroy()
+		prankAll(list, "flash")
+		local ex = Instance.new("Explosion")
+		ex.Position = center + V(0, 5, 0)
+		ex.BlastRadius = 90
+		ex.BlastPressure = 250000
+		ex.DestroyJointRadiusPercent = 0
+		ex.Parent = workspace
+		-- огненный шар и гриб
+		local ball = Instance.new("Part")
+		ball.Shape = Enum.PartType.Ball
+		ball.Anchored = true
+		ball.CanCollide = false
+		ball.CanQuery = false
+		ball.Material = Enum.Material.Neon
+		ball.Color = Color3.fromRGB(255, 150, 40)
+		ball.Size = V(10, 10, 10)
+		ball.CFrame = CFrame.new(center + V(0, 10, 0))
+		ball.Parent = folder
+		TweenService:Create(ball, TweenInfo.new(3, Enum.EasingStyle.Quad), { Size = V(220, 220, 220), Transparency = 1 }):Play()
+		local stem = Instance.new("Part")
+		stem.Anchored = true
+		stem.CanCollide = false
+		stem.CanQuery = false
+		stem.Material = Enum.Material.Slate
+		stem.Color = Color3.fromRGB(120, 100, 90)
+		stem.Size = V(20, 10, 20)
+		stem.CFrame = CFrame.new(center + V(0, 5, 0))
+		stem.Parent = folder
+		TweenService:Create(stem, TweenInfo.new(5), { Size = V(30, 160, 30), CFrame = CFrame.new(center + V(0, 80, 0)) }):Play()
+		local cap = Instance.new("Part")
+		cap.Shape = Enum.PartType.Ball
+		cap.Anchored = true
+		cap.CanCollide = false
+		cap.CanQuery = false
+		cap.Material = Enum.Material.Slate
+		cap.Color = Color3.fromRGB(150, 120, 100)
+		cap.Size = V(30, 20, 30)
+		cap.CFrame = CFrame.new(center + V(0, 20, 0))
+		cap.Parent = folder
+		TweenService:Create(cap, TweenInfo.new(5), { Size = V(140, 70, 140), CFrame = CFrame.new(center + V(0, 170, 0)) }):Play()
+		task.delay(8, function()
+			for _, d in ipairs(folder:GetChildren()) do
+				if d:IsA("BasePart") then
+					TweenService:Create(d, TweenInfo.new(4), { Transparency = 1 }):Play()
+				end
+			end
+			task.delay(4.5, function()
+				folder:Destroy()
+			end)
+		end)
+	end)
+end
+
+local function tsunami(p)
+	local center, list, s = prankTarget(p)
+	if not s then
+		notify(p, "Цунами работает только в матче (на поляне)")
+		return
+	end
+	prankAll(list, "rumble", "🌊 ЦУНАМИ! Держитесь!")
+	local E = World.CLEARING_HALF
+	local wave = Instance.new("Part")
+	wave.Anchored = true
+	wave.CanCollide = false
+	wave.CanQuery = false
+	wave.Material = Enum.Material.Glass
+	wave.Color = Color3.fromRGB(40, 110, 150)
+	wave.Transparency = 0.25
+	wave.Size = V(E * 2 + 60, 46, 26)
+	local from, to = center + V(0, 23, -E - 40), center + V(0, 23, E + 40)
+	wave.CFrame = CFrame.new(from)
+	wave.Parent = workspace
+	local foam = Instance.new("Part")
+	foam.Anchored = true
+	foam.CanCollide = false
+	foam.CanQuery = false
+	foam.Material = Enum.Material.Neon
+	foam.Color = Color3.fromRGB(230, 245, 255)
+	foam.Size = V(E * 2 + 60, 4, 30)
+	foam.CFrame = CFrame.new(from + V(0, 24, 0))
+	foam.Parent = workspace
+	local t0 = os.clock()
+	local dur = 9
+	local hitBy = {}
+	while true do
+		local a = math.min(1, (os.clock() - t0) / dur)
+		local pos = from:Lerp(to, a)
+		wave.CFrame = CFrame.new(pos)
+		foam.CFrame = CFrame.new(pos + V(0, 24, 0))
+		for _, q in ipairs(list) do
+			local hrp = hrpOf(q)
+			if hrp and math.abs(hrp.Position.Z - pos.Z) < 16 and math.abs(hrp.Position.X - pos.X) < E + 30 and not hitBy[q] then
+				hitBy[q] = true
+				hrp.AssemblyLinearVelocity = V(0, 45, 90)
+			end
+		end
+		if a >= 1 then
+			break
+		end
+		RunService.Heartbeat:Wait()
+	end
+	wave:Destroy()
+	foam:Destroy()
+	-- поляну затопило: настоящая вода, можно плавать
+	local region = CFrame.new(center + V(0, 4, 0))
+	pcall(function()
+		workspace.Terrain:FillBlock(region, V(E * 2 - 8, 8, E * 2 - 8), Enum.Material.Water)
+	end)
+	prankAll(list, nil, "Поляну затопило! Вода уйдёт через 25 секунд.")
+	task.delay(25, function()
+		pcall(function()
+			workspace.Terrain:FillBlock(region, V(E * 2 - 8, 8, E * 2 - 8), Enum.Material.Air)
+		end)
+	end)
+end
+
+-- денежный дождь: монеты падают на центр, кто подобрал — тому монеты по-настоящему
+local function moneyRain(p)
+	local center, list = prankTarget(p)
+	prankAll(list, "coins", "💰 С неба падают монеты! Собирай у центра!")
+	local folder = Instance.new("Folder")
+	folder.Name = "MoneyRain"
+	folder.Parent = workspace
+	task.spawn(function()
+		for _ = 1, 45 do
+			local a, r = math.random() * math.pi * 2, 6 + math.random() * 30
+			local c = Instance.new("Part")
+			c.Name = "RainCoin"
+			c.Shape = Enum.PartType.Cylinder
+			c.Size = V(0.4, 2.4, 2.4)
+			c.Color = Color3.fromRGB(255, 205, 60)
+			c.Material = Enum.Material.Neon
+			c.CFrame = CFrame.new(center + V(math.cos(a) * r, 70 + math.random() * 30, math.sin(a) * r)) * CFrame.Angles(0, 0, math.pi / 2)
+			c.Parent = folder
+			local taken = false
+			c.Touched:Connect(function(hit)
+				local q = Players:GetPlayerFromCharacter(hit.Parent)
+				if q and not taken then
+					taken = true
+					addCoins(q, 10)
+					notify(q, "+10 монет!")
+					c:Destroy()
+				end
+			end)
+			task.wait(0.15)
+		end
+	end)
+	task.delay(45, function()
+		folder:Destroy()
+	end)
+end
+
 R.Dev.OnServerEvent:Connect(function(p, action, value)
-	if not Config.DevTools or not p:GetAttribute("Admin") then
+	local lvl = p:GetAttribute("Admin") or 0
+	if not Config.DevTools or lvl < 1 then
 		return
 	end
 	local s = sessionOf(p)
+	-- уровень 1 (друзья)
 	if action == "ghost" and typeof(value) == "boolean" then
 		p:SetAttribute("DevGhost", value)
 	elseif action == "phase" and s then
@@ -3305,13 +3597,32 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 		for k in pairs(Items.Resources) do
 			addRes(p, k, k == "key" and 1 or 30)
 		end
-		notify(p, "[Тест] +30 всех ресурсов и Ключ")
+		notify(p, "[Админ] +30 всех ресурсов и Ключ")
 	elseif action == "toexit" and s and s.exit then
 		place(p, s.exit.exitOut * CFrame.new(0, 4, 8), false)
+	elseif lvl < 2 then
+		return
+	-- уровень 2 (главная)
 	elseif action == "coins" then
 		addCoins(p, 500)
 	elseif action == "down" and s then
 		down(p)
+	elseif action == "invisible" then
+		p:SetAttribute("Invisible", not p:GetAttribute("Invisible"))
+		applyInvisible(p)
+		notify(p, p:GetAttribute("Invisible") and "Ты невидим: ни тела, ни ника" or "Ты снова видим")
+	elseif action == "tpto" and typeof(value) == "number" then
+		local target = Players:GetPlayerByUserId(value)
+		local th = target and hrpOf(target)
+		if th then
+			place(p, th.CFrame * CFrame.new(0, 0, 6), false)
+		end
+	elseif action == "nuke" then
+		nuke(p)
+	elseif action == "tsunami" then
+		task.spawn(tsunami, p)
+	elseif action == "money" then
+		moneyRain(p)
 	end
 end)
 ]]></string>
@@ -5885,6 +6196,7 @@ BuildMode.init(gui, make)
 Radial.init(gui)
 local toggleMap, updateMap, updatePings
 local lobbyBar, updateMusic, settingsPanel, adminPanel
+local spectating, spectateIndex = nil, 0
 local musicOn = true
 
 local function equip(id)
@@ -7310,6 +7622,8 @@ end)
 local musicVolume = Config.Music.Volume or 0.4
 settingsPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 300), BackgroundColor3 = RGB(24, 26, 30), BackgroundTransparency = 0.05, Visible = false, ZIndex = 16 }, gui)
 corner(settingsPanel, 14)
+-- «модальная» кнопка освобождает мышь, пока открыто окно (в виде от первого лица)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, settingsPanel)
 make("UIStroke", { Color = RGB(120, 130, 150), Thickness = 2 }, settingsPanel)
 make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 28, TextColor3 = RGB(240, 240, 235), Text = "НАСТРОЙКИ", ZIndex = 17 }, settingsPanel)
 local function sBtn(text, pos, size, color, fn)
@@ -7350,6 +7664,7 @@ end)
 -- вход в админ-панель по коду (проверяет сервер)
 adminPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 240), BackgroundColor3 = RGB(24, 26, 30), Visible = false, ZIndex = 18 }, gui)
 corner(adminPanel, 14)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, adminPanel)
 make("UIStroke", { Color = RGB(200, 140, 60), Thickness = 2 }, adminPanel)
 make("TextLabel", { Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(255, 210, 140), Text = "Доступ к админ-панели", ZIndex = 19 }, adminPanel)
 local codeBox = make("TextBox", { Position = UDim2.fromOffset(60, 60), Size = UDim2.fromOffset(260, 50), BackgroundColor3 = RGB(40, 44, 50), Font = Enum.Font.GothamBlack, TextSize = 28, TextColor3 = RGB(255, 255, 255), PlaceholderText = "Введите код", PlaceholderColor3 = RGB(140, 140, 150), Text = "", ClearTextOnFocus = true, ZIndex = 19 }, adminPanel)
@@ -7364,9 +7679,13 @@ aBtn("Войти", 30, RGB(60, 140, 80), function()
 	remote("Admin"):FireServer(codeBox.Text)
 	adminMsg.Text = "Проверяю..."
 	task.delay(1, function()
-		if player:GetAttribute("Admin") then
+		local lvl = player:GetAttribute("Admin") or 0
+		if lvl == 2 then
 			adminPanel.Visible = false
-			notify("Добро пожаловать в админ-панель!")
+			notify("Главная админ-панель открыта! Кнопки — справа.")
+		elseif lvl == 1 then
+			adminPanel.Visible = false
+			notify("Админ-панель для друзей открыта! Кнопки — справа.")
 		else
 			adminMsg.Text = "Неверный код"
 		end
@@ -7412,6 +7731,39 @@ function updateMusic(dt)
 	local target = musicOn and musicVolume * (player:GetAttribute("Phase") == "night" and inMatch() and 0.7 or 1) or 0
 	musicSound.Volume = musicSound.Volume + (target - musicSound.Volume) * math.min(1, (dt or 0.016) * 2)
 end
+
+-- кнопка настроек всегда на виду (слева вверху, рядом с меню Roblox)
+local gearB = make("TextButton", { Position = UDim2.fromOffset(250, 12), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = RGB(20, 22, 26), BackgroundTransparency = 0.3, Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = RGB(240, 240, 240), Text = "⚙" }, gui)
+corner(gearB, 100)
+gearB.Activated:Connect(function()
+	settingsPanel.Visible = not settingsPanel.Visible
+end)
+
+-- эффекты приколов админа (ядерка, цунами, денежный дождь)
+local flashFrame = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(255, 255, 240), BackgroundTransparency = 1, ZIndex = 40 }, gui)
+remote("Prank").OnClientEvent:Connect(function(kind)
+	if kind == "siren" then
+		for k = 0, 4 do
+			task.delay(k, function()
+				sound(Config.Sounds.Rumble, 1.2, 1.6)
+				shake(0.15)
+			end)
+		end
+	elseif kind == "flash" then
+		flashFrame.BackgroundTransparency = 0
+		TweenService:Create(flashFrame, TweenInfo.new(2.5), { BackgroundTransparency = 1 }):Play()
+		sound(Config.Sounds.Rumble, 2, 0.3)
+		shake(1)
+		task.delay(1, function()
+			shake(0.8)
+		end)
+	elseif kind == "rumble" then
+		sound(Config.Sounds.Rumble, 2, 0.5)
+		shake(0.6)
+	elseif kind == "coins" then
+		sound(Config.Sounds.Pickup, 1, 1.2)
+	end
+end)
 
 -- сон и укрытие в лианах
 local restPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(0, 0, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 5 }, gui)
@@ -7471,7 +7823,13 @@ RunService.RenderStepped:Connect(function(dt)
 
 	-- камера: ранен — вид от третьего лица на своё тело
 	local isDown = player:GetAttribute("Downed") == true and inMatch()
-	player.CameraMode = (playing and not isDown) and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
+	if spectating and not (spectating.Parent and spectating.Character) then
+		spectating = nil
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+		end
+	end
+	player.CameraMode = (playing and not isDown and not spectating) and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
 	if isDown then
 		player.CameraMinZoomDistance = 9
 		player.CameraMaxZoomDistance = 16
@@ -7635,14 +7993,28 @@ end)
 if Config.DevTools then
 	local bar = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 60), Size = UDim2.new(0, 190, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, gui)
 	-- админ-кнопки видны только после ввода кода в Настройки → Админ-панель
-	bar.Visible = player:GetAttribute("Admin") == true
-	player:GetAttributeChangedSignal("Admin"):Connect(function()
-		bar.Visible = player:GetAttribute("Admin") == true
-	end)
-	make("UIListLayout", { Padding = UDim.new(0, 5) }, bar)
-	local function btn(text, fn)
-		local b = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(30, 30, 34), BackgroundTransparency = 0.25, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(230, 230, 230), Text = text }, bar)
+	-- уровень 1 (код друзей) — часть кнопок, уровень 2 (главный код) — все
+	local levelOf = {}
+	local function refreshAdmin()
+		local lvl = player:GetAttribute("Admin") or 0
+		if lvl == true then
+			lvl = 2
+		end
+		bar.Visible = lvl >= 1
+		for b, need in pairs(levelOf) do
+			b.Visible = lvl >= need
+		end
+	end
+	player:GetAttributeChangedSignal("Admin"):Connect(refreshAdmin)
+	local title = make("TextLabel", { Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = RGB(255, 200, 120), Text = "АДМИН-ПАНЕЛЬ", LayoutOrder = -1 }, bar)
+	local _ = title
+	make("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, bar)
+	local order = 0
+	local function btn(text, fn, need, color)
+		order += 1
+		local b = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = color or RGB(30, 30, 34), BackgroundTransparency = 0.25, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(230, 230, 230), Text = text, LayoutOrder = order }, bar)
 		corner(b, 6)
+		levelOf[b] = need or 1
 		b.MouseButton1Click:Connect(function()
 			fn(b)
 		end)
@@ -7742,12 +8114,66 @@ if Config.DevTools then
 	btn("Телепорт к выходу", function()
 		remote("Dev"):FireServer("toexit")
 	end)
+	-- только главная админка
 	btn("+500 монет", function()
 		remote("Dev"):FireServer("coins")
-	end)
+	end, 2)
 	btn("Ранить себя (тест)", function()
 		remote("Dev"):FireServer("down")
-	end)
+	end, 2)
+	btn("Невидимость", function(b)
+		remote("Dev"):FireServer("invisible")
+		task.delay(0.4, function()
+			b.Text = player:GetAttribute("Invisible") and "Невидимость: ВКЛ" or "Невидимость"
+		end)
+	end, 2, RGB(60, 40, 90))
+	-- наблюдение за игроками: камера переходит к следующему игроку
+	local others = {}
+	local function nextPlayer()
+		others = {}
+		for _, q in ipairs(Players:GetPlayers()) do
+			if q ~= player and q.Character and q.Character:FindFirstChildOfClass("Humanoid") then
+				table.insert(others, q)
+			end
+		end
+		if #others == 0 then
+			notify("На сервере больше никого нет")
+			return nil
+		end
+		spectateIndex = spectateIndex % #others + 1
+		return others[spectateIndex]
+	end
+	btn("Наблюдать: следующий", function()
+		local q = nextPlayer()
+		if q then
+			spectating = q
+			workspace.CurrentCamera.CameraSubject = q.Character:FindFirstChildOfClass("Humanoid")
+			notify("Наблюдаешь за " .. q.DisplayName)
+		end
+	end, 2, RGB(30, 60, 90))
+	btn("Перестать наблюдать", function()
+		spectating = nil
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+		end
+	end, 2, RGB(30, 60, 90))
+	btn("ТП к игроку", function()
+		local q = spectating or nextPlayer()
+		if q then
+			remote("Dev"):FireServer("tpto", q.UserId)
+		end
+	end, 2, RGB(30, 60, 90))
+	btn("☢ Ядерка на поляну", function()
+		remote("Dev"):FireServer("nuke")
+	end, 2, RGB(120, 60, 20))
+	btn("🌊 Цунами", function()
+		remote("Dev"):FireServer("tsunami")
+	end, 2, RGB(20, 70, 120))
+	btn("💰 Денежный дождь", function()
+		remote("Dev"):FireServer("money")
+	end, 2, RGB(120, 100, 20))
+	refreshAdmin()
 	UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or not player:GetAttribute("Admin") then
 			return
@@ -7791,9 +8217,11 @@ end
 rescale()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
 
-local isTouch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-keysHint.Visible = not isTouch
-if isTouch then
+local function touchMode()
+	return UserInputService.TouchEnabled and (not UserInputService.KeyboardEnabled or UserInputService:GetLastInputType() == Enum.UserInputType.Touch)
+end
+keysHint.Visible = not touchMode()
+if UserInputService.TouchEnabled then
 	local pad = make("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -24, 1, -190), Size = UDim2.fromOffset(250, 330), BackgroundTransparency = 1 }, gui)
 	local function tbtn(text, pos, size, color, fn)
 		local b = make("TextButton", { AnchorPoint = Vector2.new(0.5, 0.5), Position = pos, Size = size, BackgroundColor3 = color, BackgroundTransparency = 0.25, Font = Enum.Font.GothamBlack, TextSize = 15, TextWrapped = true, TextColor3 = RGB(255, 255, 255), Text = text }, pad)
@@ -7805,7 +8233,7 @@ if isTouch then
 		return b
 	end
 	-- большая кнопка удара/действия
-	tbtn("УДАР", UDim2.fromOffset(185, 270), UDim2.fromOffset(110, 110), RGB(190, 60, 50), function()
+	tbtn("УДАР\nРУБИТЬ", UDim2.fromOffset(185, 270), UDim2.fromOffset(110, 110), RGB(190, 60, 50), function()
 		doSwing()
 	end)
 	local sprintB
@@ -7851,7 +8279,9 @@ if isTouch then
 		refreshHotbar()
 	end)
 	RunService.RenderStepped:Connect(function()
-		pad.Visible = inMatch() and not cutscene
+		local t = touchMode()
+		pad.Visible = t and inMatch() and not cutscene
+		keysHint.Visible = not t
 	end)
 end
 ]]></string>

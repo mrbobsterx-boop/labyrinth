@@ -34,7 +34,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
-	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -103,32 +103,66 @@ local function syncProfile(p)
 	p:SetAttribute("OwnedClasses", HttpService:JSONEncode(pr.owned))
 end
 
-local function saveProfile(p)
+-- сохранение: несколько попыток; если профиль не загрузился — НЕ сохраняем,
+-- чтобы не затереть монеты и классы игрока нулями
+local function saveProfile(p, wait)
 	local pr = profiles[p]
-	if pr and profileStore then
-		task.spawn(function()
-			pcall(function()
-				profileStore:SetAsync("u" .. p.UserId, HttpService:JSONEncode(pr))
+	if not pr or not profileStore or pr.loadFailed then
+		return
+	end
+	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class })
+	local key = "u" .. p.UserId
+	local function run()
+		for attempt = 1, 3 do
+			local ok = pcall(function()
+				profileStore:SetAsync(key, data)
 			end)
-		end)
+			if ok then
+				pr.dirty = false
+				return
+			end
+			task.wait(2 * attempt)
+		end
+		warn("[Labyrinth] не удалось сохранить профиль", p.Name)
+	end
+	if wait then
+		run()
+	else
+		task.spawn(run)
 	end
 end
 
 local function loadProfile(p)
 	local pr = { coins = 0, owned = { "none" }, class = "none" }
 	if profileStore then
-		local ok, json = pcall(function()
-			return profileStore:GetAsync("u" .. p.UserId)
-		end)
-		if ok and typeof(json) == "string" then
-			local ok2, data = pcall(function()
-				return HttpService:JSONDecode(json)
+		local loaded = false
+		for attempt = 1, 3 do
+			local ok, json = pcall(function()
+				return profileStore:GetAsync("u" .. p.UserId)
 			end)
-			if ok2 and typeof(data) == "table" then
-				pr.coins = tonumber(data.coins) or 0
-				pr.owned = typeof(data.owned) == "table" and data.owned or { "none" }
-				pr.class = typeof(data.class) == "string" and data.class or "none"
+			if ok then
+				loaded = true
+				if typeof(json) == "string" then
+					local ok2, data = pcall(function()
+						return HttpService:JSONDecode(json)
+					end)
+					if ok2 and typeof(data) == "table" then
+						pr.coins = tonumber(data.coins) or 0
+						pr.owned = typeof(data.owned) == "table" and data.owned or { "none" }
+						pr.class = typeof(data.class) == "string" and data.class or "none"
+					end
+				end
+				break
 			end
+			task.wait(2 * attempt)
+		end
+		if not loaded then
+			pr.loadFailed = true
+			task.delay(3, function()
+				if p.Parent then
+					R.Notify:FireClient(p, "Не удалось загрузить сохранение. Монеты в этот раз не сохранятся — перезайди позже.")
+				end
+			end)
 		end
 	end
 	profiles[p] = pr
@@ -139,10 +173,38 @@ local function addCoins(p, n)
 	local pr = profiles[p]
 	if pr then
 		pr.coins += n
+		pr.dirty = true
 		syncProfile(p)
-		saveProfile(p)
 	end
 end
+
+-- автосохранение раз в минуту (только у кого что-то поменялось)
+task.spawn(function()
+	while true do
+		task.wait(60)
+		for p, pr in pairs(profiles) do
+			if pr.dirty and p.Parent then
+				saveProfile(p)
+			end
+		end
+	end
+end)
+
+-- сервер выключается (например, вышло обновление) — сохраняем всех
+game:BindToClose(function()
+	local left = 0
+	for p in pairs(profiles) do
+		left += 1
+		task.spawn(function()
+			saveProfile(p, true)
+			left -= 1
+		end)
+	end
+	local t0 = os.clock()
+	while left > 0 and os.clock() - t0 < 25 do
+		task.wait(0.2)
+	end
+end)
 
 ------------------------------------------------------------------
 -- Игроки и инвентарь
@@ -168,6 +230,7 @@ local function notifySession(s, text)
 end
 
 local updateHeld
+local applyInvisible
 local function addRes(p, k, n)
 	local st = state[p]
 	st.res[k] = math.max(0, (st.res[k] or 0) + n)
@@ -2195,6 +2258,9 @@ local function onCharacter(p, char)
 	p:SetAttribute("Crouched", false)
 	task.delay(0.5, function()
 		armorVisual(p)
+		if p:GetAttribute("Invisible") then
+			applyInvisible(p)
+		end
 	end)
 	p:SetAttribute("Hidden", false)
 	p:SetAttribute("Sleeping", false)
@@ -2241,25 +2307,251 @@ end)
 ------------------------------------------------------------------
 -- Тестовые кнопки
 ------------------------------------------------------------------
--- админ-панель: код проверяется только на сервере
-local ADMIN_CODE = "2436"
+-- админ-панель: коды проверяются только на сервере
+-- 2436 — главная (владелец, уровень 2), 6363 — для друзей (уровень 1)
+local ADMIN_CODES = { ["2436"] = 2, ["6363"] = 1 }
 local adminTries = {}
 R.Admin.OnServerEvent:Connect(function(p, code)
 	local n = (adminTries[p] or 0) + 1
 	adminTries[p] = n
-	if n > 10 then
+	if n > 10 or typeof(code) ~= "string" then
 		return
 	end
-	if typeof(code) == "string" and code:gsub("%s", "") == ADMIN_CODE then
-		p:SetAttribute("Admin", true)
+	local lvl = ADMIN_CODES[code:gsub("%s", "")]
+	if lvl and lvl > (p:GetAttribute("Admin") or 0) then
+		p:SetAttribute("Admin", lvl)
 	end
 end)
 
+------------------------------------------------------------------
+-- Приколы главной админки
+------------------------------------------------------------------
+-- невидимость: ни тела, ни ника, монстры не трогают
+function applyInvisible(p)
+	local char = p.Character
+	if not char then
+		return
+	end
+	local on = p:GetAttribute("Invisible") == true
+	for _, d in ipairs(char:GetDescendants()) do
+		if d:IsA("BasePart") or d:IsA("Decal") then
+			if d:GetAttribute("T0") == nil then
+				d:SetAttribute("T0", d.Transparency)
+			end
+			d.Transparency = on and 1 or d:GetAttribute("T0")
+		end
+	end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.DisplayDistanceType = on and Enum.HumanoidDisplayDistanceType.None or Enum.HumanoidDisplayDistanceType.Viewer
+		hum.NameDisplayDistance = on and 0 or 100
+	end
+	p:SetAttribute("DevGhost", on)
+end
+
+-- центр «главного острова»: поляна сессии админа или лобби
+local function prankTarget(p)
+	local s = sessionOf(p)
+	if s then
+		return s.O, s.players, s
+	end
+	local list = {}
+	for _, q in ipairs(Players:GetPlayers()) do
+		if not sessionOf(q) then
+			table.insert(list, q)
+		end
+	end
+	return World.LOBBY, list, nil
+end
+
+local function prankAll(list, kind, msg)
+	for _, q in ipairs(list) do
+		R.Prank:FireClient(q, kind)
+		if msg then
+			notify(q, msg)
+		end
+	end
+end
+
+local function nuke(p)
+	local center, list = prankTarget(p)
+	prankAll(list, "siren", "☢ ВНИМАНИЕ! ЯДЕРНЫЙ УДАР ЧЕРЕЗ 5 СЕКУНД! ☢")
+	local folder = Instance.new("Folder")
+	folder.Name = "Nuke"
+	folder.Parent = workspace
+	local rocket = Instance.new("Part")
+	rocket.Anchored = true
+	rocket.CanCollide = false
+	rocket.Size = V(3, 12, 3)
+	rocket.Color = Color3.fromRGB(60, 70, 60)
+	rocket.Material = Enum.Material.Metal
+	rocket.CFrame = CFrame.new(center + V(0, 500, 0))
+	rocket.Parent = folder
+	local fireTail = Instance.new("Fire")
+	fireTail.Size = 8
+	fireTail.Parent = rocket
+	TweenService:Create(rocket, TweenInfo.new(5, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = CFrame.new(center + V(0, 8, 0)) }):Play()
+	task.delay(5, function()
+		rocket:Destroy()
+		prankAll(list, "flash")
+		local ex = Instance.new("Explosion")
+		ex.Position = center + V(0, 5, 0)
+		ex.BlastRadius = 90
+		ex.BlastPressure = 250000
+		ex.DestroyJointRadiusPercent = 0
+		ex.Parent = workspace
+		-- огненный шар и гриб
+		local ball = Instance.new("Part")
+		ball.Shape = Enum.PartType.Ball
+		ball.Anchored = true
+		ball.CanCollide = false
+		ball.CanQuery = false
+		ball.Material = Enum.Material.Neon
+		ball.Color = Color3.fromRGB(255, 150, 40)
+		ball.Size = V(10, 10, 10)
+		ball.CFrame = CFrame.new(center + V(0, 10, 0))
+		ball.Parent = folder
+		TweenService:Create(ball, TweenInfo.new(3, Enum.EasingStyle.Quad), { Size = V(220, 220, 220), Transparency = 1 }):Play()
+		local stem = Instance.new("Part")
+		stem.Anchored = true
+		stem.CanCollide = false
+		stem.CanQuery = false
+		stem.Material = Enum.Material.Slate
+		stem.Color = Color3.fromRGB(120, 100, 90)
+		stem.Size = V(20, 10, 20)
+		stem.CFrame = CFrame.new(center + V(0, 5, 0))
+		stem.Parent = folder
+		TweenService:Create(stem, TweenInfo.new(5), { Size = V(30, 160, 30), CFrame = CFrame.new(center + V(0, 80, 0)) }):Play()
+		local cap = Instance.new("Part")
+		cap.Shape = Enum.PartType.Ball
+		cap.Anchored = true
+		cap.CanCollide = false
+		cap.CanQuery = false
+		cap.Material = Enum.Material.Slate
+		cap.Color = Color3.fromRGB(150, 120, 100)
+		cap.Size = V(30, 20, 30)
+		cap.CFrame = CFrame.new(center + V(0, 20, 0))
+		cap.Parent = folder
+		TweenService:Create(cap, TweenInfo.new(5), { Size = V(140, 70, 140), CFrame = CFrame.new(center + V(0, 170, 0)) }):Play()
+		task.delay(8, function()
+			for _, d in ipairs(folder:GetChildren()) do
+				if d:IsA("BasePart") then
+					TweenService:Create(d, TweenInfo.new(4), { Transparency = 1 }):Play()
+				end
+			end
+			task.delay(4.5, function()
+				folder:Destroy()
+			end)
+		end)
+	end)
+end
+
+local function tsunami(p)
+	local center, list, s = prankTarget(p)
+	if not s then
+		notify(p, "Цунами работает только в матче (на поляне)")
+		return
+	end
+	prankAll(list, "rumble", "🌊 ЦУНАМИ! Держитесь!")
+	local E = World.CLEARING_HALF
+	local wave = Instance.new("Part")
+	wave.Anchored = true
+	wave.CanCollide = false
+	wave.CanQuery = false
+	wave.Material = Enum.Material.Glass
+	wave.Color = Color3.fromRGB(40, 110, 150)
+	wave.Transparency = 0.25
+	wave.Size = V(E * 2 + 60, 46, 26)
+	local from, to = center + V(0, 23, -E - 40), center + V(0, 23, E + 40)
+	wave.CFrame = CFrame.new(from)
+	wave.Parent = workspace
+	local foam = Instance.new("Part")
+	foam.Anchored = true
+	foam.CanCollide = false
+	foam.CanQuery = false
+	foam.Material = Enum.Material.Neon
+	foam.Color = Color3.fromRGB(230, 245, 255)
+	foam.Size = V(E * 2 + 60, 4, 30)
+	foam.CFrame = CFrame.new(from + V(0, 24, 0))
+	foam.Parent = workspace
+	local t0 = os.clock()
+	local dur = 9
+	local hitBy = {}
+	while true do
+		local a = math.min(1, (os.clock() - t0) / dur)
+		local pos = from:Lerp(to, a)
+		wave.CFrame = CFrame.new(pos)
+		foam.CFrame = CFrame.new(pos + V(0, 24, 0))
+		for _, q in ipairs(list) do
+			local hrp = hrpOf(q)
+			if hrp and math.abs(hrp.Position.Z - pos.Z) < 16 and math.abs(hrp.Position.X - pos.X) < E + 30 and not hitBy[q] then
+				hitBy[q] = true
+				hrp.AssemblyLinearVelocity = V(0, 45, 90)
+			end
+		end
+		if a >= 1 then
+			break
+		end
+		RunService.Heartbeat:Wait()
+	end
+	wave:Destroy()
+	foam:Destroy()
+	-- поляну затопило: настоящая вода, можно плавать
+	local region = CFrame.new(center + V(0, 4, 0))
+	pcall(function()
+		workspace.Terrain:FillBlock(region, V(E * 2 - 8, 8, E * 2 - 8), Enum.Material.Water)
+	end)
+	prankAll(list, nil, "Поляну затопило! Вода уйдёт через 25 секунд.")
+	task.delay(25, function()
+		pcall(function()
+			workspace.Terrain:FillBlock(region, V(E * 2 - 8, 8, E * 2 - 8), Enum.Material.Air)
+		end)
+	end)
+end
+
+-- денежный дождь: монеты падают на центр, кто подобрал — тому монеты по-настоящему
+local function moneyRain(p)
+	local center, list = prankTarget(p)
+	prankAll(list, "coins", "💰 С неба падают монеты! Собирай у центра!")
+	local folder = Instance.new("Folder")
+	folder.Name = "MoneyRain"
+	folder.Parent = workspace
+	task.spawn(function()
+		for _ = 1, 45 do
+			local a, r = math.random() * math.pi * 2, 6 + math.random() * 30
+			local c = Instance.new("Part")
+			c.Name = "RainCoin"
+			c.Shape = Enum.PartType.Cylinder
+			c.Size = V(0.4, 2.4, 2.4)
+			c.Color = Color3.fromRGB(255, 205, 60)
+			c.Material = Enum.Material.Neon
+			c.CFrame = CFrame.new(center + V(math.cos(a) * r, 70 + math.random() * 30, math.sin(a) * r)) * CFrame.Angles(0, 0, math.pi / 2)
+			c.Parent = folder
+			local taken = false
+			c.Touched:Connect(function(hit)
+				local q = Players:GetPlayerFromCharacter(hit.Parent)
+				if q and not taken then
+					taken = true
+					addCoins(q, 10)
+					notify(q, "+10 монет!")
+					c:Destroy()
+				end
+			end)
+			task.wait(0.15)
+		end
+	end)
+	task.delay(45, function()
+		folder:Destroy()
+	end)
+end
+
 R.Dev.OnServerEvent:Connect(function(p, action, value)
-	if not Config.DevTools or not p:GetAttribute("Admin") then
+	local lvl = p:GetAttribute("Admin") or 0
+	if not Config.DevTools or lvl < 1 then
 		return
 	end
 	local s = sessionOf(p)
+	-- уровень 1 (друзья)
 	if action == "ghost" and typeof(value) == "boolean" then
 		p:SetAttribute("DevGhost", value)
 	elseif action == "phase" and s then
@@ -2268,12 +2560,31 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 		for k in pairs(Items.Resources) do
 			addRes(p, k, k == "key" and 1 or 30)
 		end
-		notify(p, "[Тест] +30 всех ресурсов и Ключ")
+		notify(p, "[Админ] +30 всех ресурсов и Ключ")
 	elseif action == "toexit" and s and s.exit then
 		place(p, s.exit.exitOut * CFrame.new(0, 4, 8), false)
+	elseif lvl < 2 then
+		return
+	-- уровень 2 (главная)
 	elseif action == "coins" then
 		addCoins(p, 500)
 	elseif action == "down" and s then
 		down(p)
+	elseif action == "invisible" then
+		p:SetAttribute("Invisible", not p:GetAttribute("Invisible"))
+		applyInvisible(p)
+		notify(p, p:GetAttribute("Invisible") and "Ты невидим: ни тела, ни ника" or "Ты снова видим")
+	elseif action == "tpto" and typeof(value) == "number" then
+		local target = Players:GetPlayerByUserId(value)
+		local th = target and hrpOf(target)
+		if th then
+			place(p, th.CFrame * CFrame.new(0, 0, 6), false)
+		end
+	elseif action == "nuke" then
+		nuke(p)
+	elseif action == "tsunami" then
+		task.spawn(tsunami, p)
+	elseif action == "money" then
+		moneyRain(p)
 	end
 end)

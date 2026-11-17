@@ -220,6 +220,7 @@ BuildMode.init(gui, make)
 Radial.init(gui)
 local toggleMap, updateMap, updatePings
 local lobbyBar, updateMusic, settingsPanel, adminPanel
+local spectating, spectateIndex = nil, 0
 local musicOn = true
 
 local function equip(id)
@@ -1645,6 +1646,8 @@ end)
 local musicVolume = Config.Music.Volume or 0.4
 settingsPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 300), BackgroundColor3 = RGB(24, 26, 30), BackgroundTransparency = 0.05, Visible = false, ZIndex = 16 }, gui)
 corner(settingsPanel, 14)
+-- «модальная» кнопка освобождает мышь, пока открыто окно (в виде от первого лица)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, settingsPanel)
 make("UIStroke", { Color = RGB(120, 130, 150), Thickness = 2 }, settingsPanel)
 make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 28, TextColor3 = RGB(240, 240, 235), Text = "НАСТРОЙКИ", ZIndex = 17 }, settingsPanel)
 local function sBtn(text, pos, size, color, fn)
@@ -1685,6 +1688,7 @@ end)
 -- вход в админ-панель по коду (проверяет сервер)
 adminPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 240), BackgroundColor3 = RGB(24, 26, 30), Visible = false, ZIndex = 18 }, gui)
 corner(adminPanel, 14)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, adminPanel)
 make("UIStroke", { Color = RGB(200, 140, 60), Thickness = 2 }, adminPanel)
 make("TextLabel", { Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(255, 210, 140), Text = "Доступ к админ-панели", ZIndex = 19 }, adminPanel)
 local codeBox = make("TextBox", { Position = UDim2.fromOffset(60, 60), Size = UDim2.fromOffset(260, 50), BackgroundColor3 = RGB(40, 44, 50), Font = Enum.Font.GothamBlack, TextSize = 28, TextColor3 = RGB(255, 255, 255), PlaceholderText = "Введите код", PlaceholderColor3 = RGB(140, 140, 150), Text = "", ClearTextOnFocus = true, ZIndex = 19 }, adminPanel)
@@ -1699,9 +1703,13 @@ aBtn("Войти", 30, RGB(60, 140, 80), function()
 	remote("Admin"):FireServer(codeBox.Text)
 	adminMsg.Text = "Проверяю..."
 	task.delay(1, function()
-		if player:GetAttribute("Admin") then
+		local lvl = player:GetAttribute("Admin") or 0
+		if lvl == 2 then
 			adminPanel.Visible = false
-			notify("Добро пожаловать в админ-панель!")
+			notify("Главная админ-панель открыта! Кнопки — справа.")
+		elseif lvl == 1 then
+			adminPanel.Visible = false
+			notify("Админ-панель для друзей открыта! Кнопки — справа.")
 		else
 			adminMsg.Text = "Неверный код"
 		end
@@ -1747,6 +1755,39 @@ function updateMusic(dt)
 	local target = musicOn and musicVolume * (player:GetAttribute("Phase") == "night" and inMatch() and 0.7 or 1) or 0
 	musicSound.Volume = musicSound.Volume + (target - musicSound.Volume) * math.min(1, (dt or 0.016) * 2)
 end
+
+-- кнопка настроек всегда на виду (слева вверху, рядом с меню Roblox)
+local gearB = make("TextButton", { Position = UDim2.fromOffset(250, 12), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = RGB(20, 22, 26), BackgroundTransparency = 0.3, Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = RGB(240, 240, 240), Text = "⚙" }, gui)
+corner(gearB, 100)
+gearB.Activated:Connect(function()
+	settingsPanel.Visible = not settingsPanel.Visible
+end)
+
+-- эффекты приколов админа (ядерка, цунами, денежный дождь)
+local flashFrame = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(255, 255, 240), BackgroundTransparency = 1, ZIndex = 40 }, gui)
+remote("Prank").OnClientEvent:Connect(function(kind)
+	if kind == "siren" then
+		for k = 0, 4 do
+			task.delay(k, function()
+				sound(Config.Sounds.Rumble, 1.2, 1.6)
+				shake(0.15)
+			end)
+		end
+	elseif kind == "flash" then
+		flashFrame.BackgroundTransparency = 0
+		TweenService:Create(flashFrame, TweenInfo.new(2.5), { BackgroundTransparency = 1 }):Play()
+		sound(Config.Sounds.Rumble, 2, 0.3)
+		shake(1)
+		task.delay(1, function()
+			shake(0.8)
+		end)
+	elseif kind == "rumble" then
+		sound(Config.Sounds.Rumble, 2, 0.5)
+		shake(0.6)
+	elseif kind == "coins" then
+		sound(Config.Sounds.Pickup, 1, 1.2)
+	end
+end)
 
 -- сон и укрытие в лианах
 local restPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(0, 0, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 5 }, gui)
@@ -1806,7 +1847,13 @@ RunService.RenderStepped:Connect(function(dt)
 
 	-- камера: ранен — вид от третьего лица на своё тело
 	local isDown = player:GetAttribute("Downed") == true and inMatch()
-	player.CameraMode = (playing and not isDown) and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
+	if spectating and not (spectating.Parent and spectating.Character) then
+		spectating = nil
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+		end
+	end
+	player.CameraMode = (playing and not isDown and not spectating) and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
 	if isDown then
 		player.CameraMinZoomDistance = 9
 		player.CameraMaxZoomDistance = 16
@@ -1970,14 +2017,28 @@ end)
 if Config.DevTools then
 	local bar = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 60), Size = UDim2.new(0, 190, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, gui)
 	-- админ-кнопки видны только после ввода кода в Настройки → Админ-панель
-	bar.Visible = player:GetAttribute("Admin") == true
-	player:GetAttributeChangedSignal("Admin"):Connect(function()
-		bar.Visible = player:GetAttribute("Admin") == true
-	end)
-	make("UIListLayout", { Padding = UDim.new(0, 5) }, bar)
-	local function btn(text, fn)
-		local b = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(30, 30, 34), BackgroundTransparency = 0.25, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(230, 230, 230), Text = text }, bar)
+	-- уровень 1 (код друзей) — часть кнопок, уровень 2 (главный код) — все
+	local levelOf = {}
+	local function refreshAdmin()
+		local lvl = player:GetAttribute("Admin") or 0
+		if lvl == true then
+			lvl = 2
+		end
+		bar.Visible = lvl >= 1
+		for b, need in pairs(levelOf) do
+			b.Visible = lvl >= need
+		end
+	end
+	player:GetAttributeChangedSignal("Admin"):Connect(refreshAdmin)
+	local title = make("TextLabel", { Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = RGB(255, 200, 120), Text = "АДМИН-ПАНЕЛЬ", LayoutOrder = -1 }, bar)
+	local _ = title
+	make("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, bar)
+	local order = 0
+	local function btn(text, fn, need, color)
+		order += 1
+		local b = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = color or RGB(30, 30, 34), BackgroundTransparency = 0.25, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(230, 230, 230), Text = text, LayoutOrder = order }, bar)
 		corner(b, 6)
+		levelOf[b] = need or 1
 		b.MouseButton1Click:Connect(function()
 			fn(b)
 		end)
@@ -2077,12 +2138,66 @@ if Config.DevTools then
 	btn("Телепорт к выходу", function()
 		remote("Dev"):FireServer("toexit")
 	end)
+	-- только главная админка
 	btn("+500 монет", function()
 		remote("Dev"):FireServer("coins")
-	end)
+	end, 2)
 	btn("Ранить себя (тест)", function()
 		remote("Dev"):FireServer("down")
-	end)
+	end, 2)
+	btn("Невидимость", function(b)
+		remote("Dev"):FireServer("invisible")
+		task.delay(0.4, function()
+			b.Text = player:GetAttribute("Invisible") and "Невидимость: ВКЛ" or "Невидимость"
+		end)
+	end, 2, RGB(60, 40, 90))
+	-- наблюдение за игроками: камера переходит к следующему игроку
+	local others = {}
+	local function nextPlayer()
+		others = {}
+		for _, q in ipairs(Players:GetPlayers()) do
+			if q ~= player and q.Character and q.Character:FindFirstChildOfClass("Humanoid") then
+				table.insert(others, q)
+			end
+		end
+		if #others == 0 then
+			notify("На сервере больше никого нет")
+			return nil
+		end
+		spectateIndex = spectateIndex % #others + 1
+		return others[spectateIndex]
+	end
+	btn("Наблюдать: следующий", function()
+		local q = nextPlayer()
+		if q then
+			spectating = q
+			workspace.CurrentCamera.CameraSubject = q.Character:FindFirstChildOfClass("Humanoid")
+			notify("Наблюдаешь за " .. q.DisplayName)
+		end
+	end, 2, RGB(30, 60, 90))
+	btn("Перестать наблюдать", function()
+		spectating = nil
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			workspace.CurrentCamera.CameraSubject = hum
+		end
+	end, 2, RGB(30, 60, 90))
+	btn("ТП к игроку", function()
+		local q = spectating or nextPlayer()
+		if q then
+			remote("Dev"):FireServer("tpto", q.UserId)
+		end
+	end, 2, RGB(30, 60, 90))
+	btn("☢ Ядерка на поляну", function()
+		remote("Dev"):FireServer("nuke")
+	end, 2, RGB(120, 60, 20))
+	btn("🌊 Цунами", function()
+		remote("Dev"):FireServer("tsunami")
+	end, 2, RGB(20, 70, 120))
+	btn("💰 Денежный дождь", function()
+		remote("Dev"):FireServer("money")
+	end, 2, RGB(120, 100, 20))
+	refreshAdmin()
 	UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or not player:GetAttribute("Admin") then
 			return
@@ -2126,9 +2241,11 @@ end
 rescale()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
 
-local isTouch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-keysHint.Visible = not isTouch
-if isTouch then
+local function touchMode()
+	return UserInputService.TouchEnabled and (not UserInputService.KeyboardEnabled or UserInputService:GetLastInputType() == Enum.UserInputType.Touch)
+end
+keysHint.Visible = not touchMode()
+if UserInputService.TouchEnabled then
 	local pad = make("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -24, 1, -190), Size = UDim2.fromOffset(250, 330), BackgroundTransparency = 1 }, gui)
 	local function tbtn(text, pos, size, color, fn)
 		local b = make("TextButton", { AnchorPoint = Vector2.new(0.5, 0.5), Position = pos, Size = size, BackgroundColor3 = color, BackgroundTransparency = 0.25, Font = Enum.Font.GothamBlack, TextSize = 15, TextWrapped = true, TextColor3 = RGB(255, 255, 255), Text = text }, pad)
@@ -2140,7 +2257,7 @@ if isTouch then
 		return b
 	end
 	-- большая кнопка удара/действия
-	tbtn("УДАР", UDim2.fromOffset(185, 270), UDim2.fromOffset(110, 110), RGB(190, 60, 50), function()
+	tbtn("УДАР\nРУБИТЬ", UDim2.fromOffset(185, 270), UDim2.fromOffset(110, 110), RGB(190, 60, 50), function()
 		doSwing()
 	end)
 	local sprintB
@@ -2186,6 +2303,8 @@ if isTouch then
 		refreshHotbar()
 	end)
 	RunService.RenderStepped:Connect(function()
-		pad.Visible = inMatch() and not cutscene
+		local t = touchMode()
+		pad.Visible = t and inMatch() and not cutscene
+		keysHint.Visible = not t
 	end)
 end
