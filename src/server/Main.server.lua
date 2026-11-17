@@ -34,6 +34,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -210,6 +211,12 @@ local function place(p, cf, anchored)
 end
 
 local function inSafeZone(s, pos)
+	if s.exit then
+		local lp = s.exit.zone.cf:PointToObjectSpace(pos)
+		if math.abs(lp.X) < s.exit.zone.size.X / 2 and math.abs(lp.Z) < s.exit.zone.size.Z / 2 then
+			return true
+		end
+	end
 	local h = World.CLEARING_HALF - 3
 	local rel = pos - s.O
 	return math.abs(rel.X) < h and math.abs(rel.Z) < h and rel.Y > -20 and rel.Y < 300
@@ -264,6 +271,119 @@ end)
 ------------------------------------------------------------------
 local respawnAtClearing
 
+-- тряпичная кукла: суставы становятся шарнирами, тело падает и болтается
+local function setRagdoll(char, on)
+	local torso = char and char:FindFirstChild("Torso")
+	if not torso then
+		return
+	end
+	for _, d in ipairs(char:GetDescendants()) do
+		if d.Name == "RagJoint" or d.Name == "RagAtt" then
+			d:Destroy()
+		end
+	end
+	for _, m in ipairs(torso:GetChildren()) do
+		if m:IsA("Motor6D") and m.Part0 and m.Part1 then
+			if on then
+				local a0 = Instance.new("Attachment")
+				a0.Name = "RagAtt"
+				a0.CFrame = m.C0
+				a0.Parent = m.Part0
+				local a1 = Instance.new("Attachment")
+				a1.Name = "RagAtt"
+				a1.CFrame = m.C1
+				a1.Parent = m.Part1
+				local bs = Instance.new("BallSocketConstraint")
+				bs.Name = "RagJoint"
+				bs.Attachment0 = a0
+				bs.Attachment1 = a1
+				bs.LimitsEnabled = true
+				bs.UpperAngle = m.Name == "Neck" and 35 or 75
+				bs.TwistLimitsEnabled = true
+				bs.TwistLowerAngle = -40
+				bs.TwistUpperAngle = 40
+				bs.Parent = torso
+			end
+			m.Enabled = not on
+			if m.Part1.Name ~= "Head" then
+				m.Part1.CanCollide = on
+			end
+		end
+	end
+end
+
+local function stopDrag(dragger)
+	local dst = state[dragger]
+	local victim = dst and dst.dragging
+	if not victim then
+		return
+	end
+	dst.dragging = nil
+	dragger:SetAttribute("Dragging", false)
+	if dst.dragRope then
+		dst.dragRope:Destroy()
+		dst.dragRope = nil
+	end
+	for _, a in ipairs(dst.dragAtts or {}) do
+		a:Destroy()
+	end
+	dst.dragAtts = nil
+	local vst = state[victim]
+	if vst then
+		vst.draggedBy = nil
+	end
+	local char = victim.Character
+	if char then
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") then
+				pcall(function()
+					d:SetNetworkOwner(victim)
+				end)
+			end
+		end
+	end
+end
+
+local function startDrag(dragger, victim)
+	local dst, vst = state[dragger], state[victim]
+	local dh = hrpOf(dragger)
+	local leg = victim.Character and (victim.Character:FindFirstChild("Right Leg") or victim.Character:FindFirstChild("RightLowerLeg"))
+	if not dst or not vst or not dh or not leg then
+		return
+	end
+	if vst.draggedBy then
+		notify(dragger, "Его уже тащит " .. vst.draggedBy.DisplayName)
+		return
+	end
+	dst.dragging = victim
+	vst.draggedBy = dragger
+	dragger:SetAttribute("Dragging", true)
+	local a0 = Instance.new("Attachment")
+	a0.Name = "DragAtt"
+	a0.Position = V(0.6, -1, 1.2)
+	a0.Parent = dh
+	local a1 = Instance.new("Attachment")
+	a1.Name = "DragAtt"
+	a1.Position = V(0, -leg.Size.Y / 2 + 0.2, 0)
+	a1.Parent = leg
+	local rope = Instance.new("RopeConstraint")
+	rope.Attachment0 = a0
+	rope.Attachment1 = a1
+	rope.Length = 3.5
+	rope.Restitution = 0
+	rope.Parent = dh
+	dst.dragRope, dst.dragAtts = rope, { a0, a1 }
+	-- физику тела считает тот, кто тащит, — так оно не дёргается
+	for _, d in ipairs(victim.Character:GetDescendants()) do
+		if d:IsA("BasePart") then
+			pcall(function()
+				d:SetNetworkOwner(dragger)
+			end)
+		end
+	end
+	notify(dragger, "Ты тащишь " .. victim.DisplayName .. " за ногу. F — отпустить.")
+end
+
 local function setDownedVisual(p, on)
 	local _, char = hrpOf(p)
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -271,6 +391,13 @@ local function setDownedVisual(p, on)
 		hum.PlatformStand = on
 		hum.WalkSpeed = on and 0 or Config.WalkSpeed
 		hum.JumpPower = on and 0 or 50
+	end
+	setRagdoll(char, on)
+	if not on then
+		local hrp = hrpOf(p)
+		if hrp then
+			hrp.CFrame = CFrame.new(hrp.Position + V(0, 2.5, 0)) * CFrame.Angles(0, select(2, hrp.CFrame:ToEulerAnglesYXZ()), 0)
+		end
 	end
 end
 
@@ -284,6 +411,13 @@ local function revive(p, by)
 	if st.revivePrompt then
 		st.revivePrompt:Destroy()
 		st.revivePrompt = nil
+	end
+	if st.dragPrompt then
+		st.dragPrompt:Destroy()
+		st.dragPrompt = nil
+	end
+	if st.draggedBy then
+		stopDrag(st.draggedBy)
 	end
 	setDownedVisual(p, false)
 	local _, char = hrpOf(p)
@@ -315,6 +449,7 @@ local function down(p)
 	end
 	st.downed = true
 	st.downedAt = os.clock()
+	stopDrag(p)
 	p:SetAttribute("Downed", true)
 	p:SetAttribute("DownedEnd", workspace:GetServerTimeNow() + Config.DownedTime)
 	setDownedVisual(p, true)
@@ -334,11 +469,34 @@ local function down(p)
 				return
 			end
 			if (bst.res.bandage or 0) < 1 then
-				notify(by, "Нужен бинт! Сделай его из травы (C → Бинт).")
+				notify(by, "Нужен бинт! Сделай его из травы (C → Бинт). Или тащи друга за ногу (F).")
 				return
 			end
 			addRes(by, "bandage", -1)
 			revive(p, by)
+		end)
+		-- тащить за ногу (F)
+		local dp = Instance.new("ProximityPrompt")
+		dp.ActionText = "Тащить за ногу"
+		dp.ObjectText = p.DisplayName
+		dp.KeyboardKeyCode = Enum.KeyCode.F
+		dp.GamepadKeyCode = Enum.KeyCode.ButtonY
+		dp.HoldDuration = 0.3
+		dp.MaxActivationDistance = 9
+		dp.RequiresLineOfSight = false
+		dp.UIOffset = Vector2.new(0, 80)
+		dp.Parent = hrp
+		st.dragPrompt = dp
+		dp.Triggered:Connect(function(by)
+			local bst = state[by]
+			if by == p or not bst or bst.session ~= s or bst.downed then
+				return
+			end
+			if bst.dragging == p then
+				stopDrag(by)
+			elseif not bst.dragging then
+				startDrag(by, p)
+			end
 		end)
 	end
 	for _, other in ipairs(s.players) do
@@ -572,7 +730,7 @@ R.Swing.OnServerEvent:Connect(function(p, hit, hitPos)
 		for k, n in pairs(t.Cost) do
 			addRes(p, k, -n)
 		end
-		Build.setTier(piece, tier)
+		Build.setTier(piece, tier, true)
 		R.HitMarker:FireClient(p, "node", "axe")
 		notify(p, piece.Name .. " → " .. t.Name)
 		return
@@ -616,6 +774,7 @@ end)
 -- Крафт: из инвентаря (C) и на верстаке
 ------------------------------------------------------------------
 local connectBed, connectChest
+local sendMap
 local function recipeById(id)
 	for _, r in ipairs(Items.Recipes) do
 		if r.Id == id then
@@ -786,7 +945,7 @@ R.Build.OnServerEvent:Connect(function(p, id, a)
 	end
 	-- проверка параметров
 	local ok = typeof(a.y) == "number" and a.y == a.y and math.abs(a.y) < 400
-	if def.Edge then
+	if def.Edge or def.Door then
 		ok = ok and typeof(a.ex) == "number" and typeof(a.ez) == "number" and (a.axis == "X" or a.axis == "Z")
 		ok = ok and a.ex % 1 == 0 and a.ez % 1 == 0
 	else
@@ -800,6 +959,13 @@ R.Build.OnServerEvent:Connect(function(p, id, a)
 	if s.pieces[key] and s.pieces[key].Parent then
 		notify(p, "Здесь уже стоит постройка")
 		return
+	end
+	if id == "door" then
+		local frame = s.pieces[Building.key("doorway", args)]
+		if not frame or not frame.Parent or frame:GetAttribute("BKind") ~= "doorway" then
+			notify(p, "Дверь ставится в дверной проём")
+			return
+		end
 	end
 	local cf = Building.cframe(id, s.O, args)
 	if (cf.Position - hrp.Position).Magnitude > 32 then
@@ -839,6 +1005,125 @@ R.Build.OnServerEvent:Connect(function(p, id, a)
 	R.HitMarker:FireClient(p, "node", "axe")
 end)
 
+-- поставить верстак / кровать / сундук (с предпросмотром на клиенте)
+local Deployables = require(Shared:WaitForChild("Deployables"))
+R.Place.OnServerEvent:Connect(function(p, toolId, cf)
+	local st = state[p]
+	local s = st and st.session
+	local def = typeof(toolId) == "string" and Items.Tools[toolId]
+	local hrp = hrpOf(p)
+	if not s or not def or def.Kind ~= "deploy" or not table.find(st.tools, toolId) or typeof(cf) ~= "CFrame" or not hrp or st.downed then
+		return
+	end
+	if (cf.Position - hrp.Position).Magnitude > 24 then
+		return
+	end
+	-- только поворот вокруг вертикали
+	local _, yaw = cf:ToEulerAnglesYXZ()
+	cf = CFrame.new(cf.Position) * CFrame.Angles(0, yaw, 0)
+	local size = Deployables.Size[def.Deploy]
+	local op = OverlapParams.new()
+	op.RespectCanCollide = true
+	for _, part in ipairs(workspace:GetPartBoundsInBox(cf * CFrame.new(0, size.Y / 2 + 0.3, 0), size - V(0.3, 0.3, 0.3), op)) do
+		if not part:IsA("Terrain") then
+			notify(p, "Здесь не помещается: мешает " .. part.Name)
+			return
+		end
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { p.Character }
+	local g = workspace:Raycast(cf.Position + V(0, 2, 0), V(0, -5, 0), params)
+	if not g then
+		notify(p, "Ставить можно только на землю или пол")
+		return
+	end
+	table.remove(st.tools, table.find(st.tools, toolId))
+	if st.equipped == toolId then
+		st.equipped = nil
+		p:SetAttribute("Equipped", nil)
+		updateHeld(p)
+	end
+	p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
+	if def.Deploy == "workbench" then
+		local b = World.BuildWorkbench(s.folder, cf)
+		table.insert(s.benches, b)
+		connectBench(s, b)
+		notifySession(s, p.DisplayName .. " поставил верстак")
+	elseif def.Deploy == "bed" then
+		local bed, pr = Build.bed(s.folder, cf)
+		connectBed(s, bed, pr)
+		notify(p, "Кровать поставлена. Ночью ляг спать — если уснут все, ночь пройдёт.")
+	elseif def.Deploy == "chest" then
+		local chest, put, take = Build.chest(s.folder, cf)
+		connectChest(s, chest, put, take)
+		notify(p, "Сундук поставлен: E — положить всё, F — забрать всё.")
+	end
+	R.HitMarker:FireClient(p, "node", "axe")
+end)
+
+-- круговое меню молотка: сразу до выбранного уровня, или снести
+R.Upgrade.OnServerEvent:Connect(function(p, piece, tier)
+	local st = state[p]
+	local s = st and st.session
+	local hrp = hrpOf(p)
+	if not s or not hrp or st.downed or st.equipped ~= "hammer" or typeof(piece) ~= "Instance" or not piece:IsDescendantOf(s.buildFolder) then
+		return
+	end
+	local cf = piece:GetBoundingBox()
+	if (cf.Position - hrp.Position).Magnitude > 20 then
+		return
+	end
+	if tier == "remove" then
+		local def = Building.ById[piece:GetAttribute("BKind")]
+		for k, n in pairs(def and def.Cost or {}) do
+			addRes(p, k, math.floor(n / 2))
+		end
+		s.pieces[piece:GetAttribute("Key")] = nil
+		piece:Destroy()
+		notify(p, "Снесено (вернулась половина досок)")
+		return
+	end
+	local cur = piece:GetAttribute("Tier") or 0
+	local t = typeof(tier) == "number" and Building.Tiers[tier]
+	if not t or tier <= cur then
+		notify(p, "Уже не хуже, чем «" .. Building.Tiers[cur].Name .. "»")
+		return
+	end
+	for k, n in pairs(t.Cost) do
+		if (st.res[k] or 0) < n then
+			notify(p, "Для «" .. t.Name .. "» нужно: " .. Items.Resources[k].Name .. " " .. n)
+			return
+		end
+	end
+	for k, n in pairs(t.Cost) do
+		addRes(p, k, -n)
+	end
+	Build.setTier(piece, tier, true)
+	R.HitMarker:FireClient(p, "node", "axe")
+	notify(p, piece.Name .. " → " .. t.Name)
+end)
+
+-- раненый подаёт сигнал: 15 секунд друзья видят, где он, и стрелки к нему
+R.Ping.OnServerEvent:Connect(function(p)
+	local st = state[p]
+	if not st or not st.downed then
+		return
+	end
+	local now = os.clock()
+	if now - (st.lastPing or -100) < 20 then
+		return
+	end
+	st.lastPing = now
+	p:SetAttribute("PingUntil", workspace:GetServerTimeNow() + 15)
+	p:SetAttribute("PingNext", workspace:GetServerTimeNow() + 20)
+	for _, q in ipairs(st.session and st.session.players or {}) do
+		if q ~= p then
+			notify(q, p.DisplayName .. " зовёт на помощь! Иди по стрелкам.")
+		end
+	end
+end)
+
 R.Craft.OnServerEvent:Connect(function(p, id)
 	local st = state[p]
 	local s = st and st.session
@@ -851,7 +1136,7 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 	if r.Station == "bench" then
 		bench = nearestBench(s, hrp.Position)
 		if not bench then
-			notify(p, "Нужен верстак рядом. Сделай его: C → Верстак.")
+			notify(p, "Нужен верстак рядом. Сделай его: C → Верстак, потом поставь.")
 			return
 		end
 		if r.Level > (bench.model:GetAttribute("Level") or 1) then
@@ -872,7 +1157,8 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 	local function power(d)
 		return d.Kind == "sword" and d.Damage or d.Tier
 	end
-	if newDef and newDef.Kind ~= "torch" then
+	local unique = newDef and (newDef.Kind == "torch" or newDef.Kind == "deploy" or newDef.Kind == "blueprint" or newDef.Kind == "hammer")
+	if newDef and not unique then
 		for _, t in ipairs(st.tools) do
 			local d = Items.Tools[t]
 			if d and d.Kind == newDef.Kind and power(d) >= power(newDef) then
@@ -925,7 +1211,7 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 		local slot
 		for i = #st.tools, 1, -1 do
 			local d = Items.Tools[st.tools[i]]
-			if d and newDef and d.Kind == newDef.Kind and newDef.Kind ~= "torch" then
+			if d and newDef and d.Kind == newDef.Kind and not unique then
 				if st.equipped == st.tools[i] then
 					st.equipped = r.Id
 				end
@@ -939,7 +1225,7 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 			p:SetAttribute("Equipped", r.Id)
 			updateHeld(p)
 		end
-		notify(p, "Создано: " .. Items.toolName(r.Id) .. (slot and " (заменил старый)" or " (выбери цифрой)"))
+		notify(p, "Создано: " .. Items.toolName(r.Id) .. (slot and " (заменил старый)" or (newDef and newDef.Kind == "deploy") and " — возьми в руку, R — повернуть, ЛКМ — поставить" or " (выбери цифрой)"))
 	end
 end)
 
@@ -1023,7 +1309,7 @@ local function endSession(s)
 		end
 	end
 	s.folder:Destroy()
-	World.ClearTerrain(s.O)
+	World.ClearTerrain(s.O, s.exit and s.exit.pit)
 	usedSlots[s.slot] = nil
 	sessions[s] = nil
 end
@@ -1044,24 +1330,19 @@ local function leaveSession(p)
 	end
 end
 
-local function connectSessionPrompts(s)
-	s.clearing.supplyPrompt.Triggered:Connect(function(p)
-		local st = state[p]
-		if not st or st.session ~= s then
-			return
-		end
-		if st.gotSupply then
-			notify(p, "Ты уже забрал свои припасы")
-			return
-		end
-		st.gotSupply = true
-		addRes(p, "wood", 14)
-		addRes(p, "stone", 6)
-		addRes(p, "fiber", 3)
-		addRes(p, "berry", 3)
-		notify(p, "Припасы: +14 дерева, +6 камня, +3 травы, +3 ягоды. Нажми C — крафт.")
-	end)
-	for _, pr in ipairs(s.folder:GetDescendants()) do
+-- карта лабиринта: стены отправляются клиентам (рисуются по Tab)
+function sendMap(s)
+	local walls = {}
+	for _, w in ipairs(s.maze.mapWalls) do
+		table.insert(walls, { w[1] == "X" and 1 or 2, math.floor(w[2] * 10) / 10, math.floor(w[3] * 10) / 10, math.floor(w[4] * 10) / 10, w[5] })
+	end
+	for _, q in ipairs(s.players) do
+		R.MapData:FireClient(q, walls, s.O, World.CLEARING_HALF, World.RADIUS, s.exit.exitOut.Position - s.O)
+	end
+end
+
+local function connectPrompts(s, root, chests)
+	for _, pr in ipairs(root:GetDescendants()) do
 		if pr:IsA("ProximityPrompt") then
 			if CollectionService:HasTag(pr, "NodePrompt") then
 				pr.Triggered:Connect(function(p)
@@ -1123,6 +1404,20 @@ local function connectSessionPrompts(s)
 					end
 					notify(p, (pr.ObjectText ~= "" and pr.ObjectText or "Находка") .. ": " .. table.concat(got, ", "))
 				end)
+			elseif CollectionService:HasTag(pr, "MapPrompt") then
+				pr.Triggered:Connect(function(p)
+					local st = state[p]
+					if not st or st.session ~= s or s.mazeFixed.mapFound then
+						return
+					end
+					s.mazeFixed.mapFound = true
+					pr.Parent:Destroy()
+					for _, q in ipairs(s.players) do
+						addRes(q, "map", 1)
+					end
+					sendMap(s)
+					notifySession(s, p.DisplayName .. " нашёл КАРТУ ЛАБИРИНТА! Нажми Tab, чтобы открыть. Карта сама меняется вместе со стенами.")
+				end)
 			elseif CollectionService:HasTag(pr, "HidePrompt") then
 				local spot = pr.Parent
 				pr.Triggered:Connect(function(p)
@@ -1170,7 +1465,7 @@ local function connectSessionPrompts(s)
 			end
 		end
 	end
-	for _, c in ipairs(s.maze.chests) do
+	for _, c in ipairs(chests or {}) do
 		c.prompt.Triggered:Connect(function(p)
 			local st = state[p]
 			if not st or st.session ~= s then
@@ -1194,6 +1489,7 @@ local function connectSessionPrompts(s)
 					glow:Destroy()
 				end
 				gain("key", 1)
+				s.mazeFixed.keyTaken = true
 				gain("crystal", 3)
 				gain("iron", 5)
 				notifySession(s, p.DisplayName .. " нашёл КЛЮЧ-КАРТУ! Найдите выход и вставьте её в считыватель.")
@@ -1222,45 +1518,152 @@ local function connectSessionPrompts(s)
 			notify(p, "Сундук: " .. table.concat(got, ", "))
 		end)
 	end
-	if s.maze.exitPrompt then
-		s.maze.exitPrompt.Triggered:Connect(function(p)
-			local st = state[p]
-			if not st or st.session ~= s or s.won then
-				return
+end
+
+local function connectExit(s)
+	local ex = s.exit
+	-- подошёл к туннелю — ролик: идём по мосту к двери лаборатории
+	ex.trigger.Touched:Connect(function(hit)
+		local p = Players:GetPlayerFromCharacter(hit.Parent)
+		local st = p and state[p]
+		if not st or st.session ~= s or st.introSeen or st.downed or s.won then
+			return
+		end
+		st.introSeen = true
+		local hrp = hrpOf(p)
+		if hrp then
+			hrp.Anchored = true
+		end
+		R.ExitIntro:FireClient(p, ex.exitOut, ex.doorFront, ex.reader.Position)
+		task.delay(10, function()
+			if st.session == s and not s.won then
+				place(p, ex.doorFront, false)
 			end
-			local hasKey = false
+		end)
+	end)
+	ex.exitPrompt.Triggered:Connect(function(p)
+		local st = state[p]
+		if not st or st.session ~= s or s.won or st.downed then
+			return
+		end
+		if (st.res.key or 0) < 1 then
 			for _, q in ipairs(s.players) do
 				if state[q] and (state[q].res.key or 0) > 0 then
-					hasKey = true
+					notify(p, "Ключ-карта у " .. q.DisplayName .. " — пусть приложит её сам.")
+					return
 				end
 			end
-			if not hasKey then
-				notify(p, "Нужна ключ-карта — она в золотом сундуке в самом дальнем тупике (над ним светится ключ).")
-				return
-			end
-			s.won = true
-			clearMonsters(s, true)
-			if s.maze.readerLight then
-				s.maze.readerLight.Color = Color3.fromRGB(60, 255, 90)
-			end
-			notifySession(s, p.DisplayName .. " вставил ключ-карту! Ворота открываются...")
-			task.delay(1, function()
-				TweenService:Create(s.maze.exitDoor, TweenInfo.new(4, Enum.EasingStyle.Sine), { CFrame = s.maze.exitDoor.CFrame + V(0, 60, 0) }):Play()
-			end)
+			notify(p, "Нужна ключ-карта — она в золотом сундуке в самом дальнем тупике.")
+			return
+		end
+		s.won = true
+		clearMonsters(s, true)
+		local hrp = hrpOf(p)
+		if hrp then
+			hrp.Anchored = true
+		end
+		R.CardInsert:FireClient(p, ex.reader.Position)
+		task.delay(1.8, function()
+			ex.readerLight.Color = Color3.fromRGB(60, 255, 90)
+			notifySession(s, p.DisplayName .. " приложил ключ-карту! Дверь открывается...")
+			TweenService:Create(ex.exitDoor, TweenInfo.new(3, Enum.EasingStyle.Sine), { CFrame = ex.exitDoor.CFrame + V(0, 15.5, 0) }):Play()
 			local coins = Config.CoinsEscape * s.diff.Coins
 			for _, q in ipairs(s.players) do
 				addCoins(q, coins)
-				local hrp = hrpOf(q)
-				if hrp then
-					hrp.Anchored = true
+				local qh = hrpOf(q)
+				if qh then
+					qh.Anchored = true
 				end
-				R.Outro:FireClient(q, s.maze.helipad, s.maze.exitOut, s.players, s.day, coins, s.O)
+				R.Outro:FireClient(q, {
+					exitOut = ex.exitOut,
+					doorFront = ex.doorFront,
+					labStart = ex.labStart,
+					labEnd = ex.labEnd,
+					backDoor = ex.labBackDoor,
+					pad = ex.helipad,
+					mazeCenter = s.O,
+					players = s.players,
+					day = s.day,
+					coins = coins,
+				})
 			end
-			task.delay(35, function()
+			task.delay(48, function()
 				endSession(s)
 			end)
 		end)
+	end)
+end
+
+-- каждую ночь лабиринт перестраивается: другие коридоры, сундуки, шахты
+local function regenMaze(s)
+	local old = s.maze.model
+	s.maze = World.BuildMazeLayout(s.folder, math.random(1, 1e6), s.O, s.mazeFixed)
+	old:Destroy()
+	connectPrompts(s, s.maze.model, s.maze.chests)
+	sendMap(s)
+	-- новые стены раздавили постройки — убираем их
+	local op = OverlapParams.new()
+	op.FilterType = Enum.RaycastFilterType.Include
+	op.FilterDescendantsInstances = { s.maze.model }
+	for key, piece in pairs(s.pieces) do
+		if piece.Parent then
+			local cf, size = piece:GetBoundingBox()
+			for _, hitPart in ipairs(workspace:GetPartBoundsInBox(cf, size - V(0.5, 0.5, 0.5), op)) do
+				if hitPart.Name == "MazeWall" then
+					piece:Destroy()
+					s.pieces[key] = nil
+					break
+				end
+			end
+		end
 	end
+	-- игроков, оказавшихся в стене, выталкиваем в ближайший коридор
+	for _, q in ipairs(s.players) do
+		local hrp = hrpOf(q)
+		if hrp and not inSafeZone(s, hrp.Position) then
+			R.MazeShift:FireClient(q)
+			local stuck = false
+			for _, hitPart in ipairs(workspace:GetPartBoundsInBox(hrp.CFrame, V(2, 4, 2), op)) do
+				if hitPart.Name == "MazeWall" or hitPart.Name == "CrawlCover" then
+					stuck = true
+				end
+			end
+			if stuck then
+				local best, bd
+				for _, c in ipairs(s.maze.cells) do
+					local d = (c - hrp.Position).Magnitude
+					if not bd or d < bd then
+						best, bd = c, d
+					end
+				end
+				if best then
+					place(q, CFrame.new(best + V(0, 4, 0)), false)
+				end
+			end
+		end
+	end
+end
+
+local function connectSessionPrompts(s)
+	s.clearing.supplyPrompt.Triggered:Connect(function(p)
+		local st = state[p]
+		if not st or st.session ~= s then
+			return
+		end
+		if st.gotSupply then
+			notify(p, "Ты уже забрал свои припасы")
+			return
+		end
+		st.gotSupply = true
+		addRes(p, "wood", 14)
+		addRes(p, "stone", 6)
+		addRes(p, "fiber", 3)
+		addRes(p, "berry", 3)
+		notify(p, "Припасы: +14 дерева, +6 камня, +3 травы, +3 ягоды. Нажми C — крафт.")
+	end)
+	connectPrompts(s, s.clearing.model, {})
+	connectPrompts(s, s.maze.model, s.maze.chests)
+	connectExit(s)
 end
 
 local function sessionLoop(s)
@@ -1289,8 +1692,14 @@ local function sessionLoop(s)
 		end
 		setPhase(s, "night", s.diff.Night)
 		moveGates(s, true, 8)
+		task.delay(9, function()
+			if s.phase == "night" and not s.ended and not s.won then
+				regenMaze(s)
+				notifySession(s, "Земля дрожит... Стены лабиринта сдвинулись. Коридоры теперь другие.")
+			end
+		end)
 		notifySession(s, "Ночь. Врата закрылись. В лабиринте — Скрежетники...")
-		task.delay(6, function()
+		task.delay(11, function()
 			if s.phase == "night" and not s.won then
 				spawnMonsters(s)
 			end
@@ -1366,14 +1775,18 @@ local function startSession(riders, diffId)
 	local seed = math.random(1, 1e6)
 	World.BuildTerrain(O)
 	s.clearing = World.BuildClearing(s.folder, seed, O)
+	World.BuildClearingTerrain(O, s.clearing.lakeCenter)
 	s.gates = World.BuildClearingWalls(s.folder, O)
-	s.maze = World.BuildMaze(s.folder, seed + 7, O)
-	World.BuildWaterSurface(s.folder, O)
-	World.BuildOuterForest(s.folder, O, seed)
+	s.mazeFixed = { keyTaken = false, mapFound = false }
+	s.maze = World.BuildMazeLayout(s.folder, seed + 7, O, s.mazeFixed)
+	s.mazeFixed.exit = s.maze.exit
+	s.exit = World.BuildExit(s.folder, O, s.maze.exit)
+	World.BuildOuterForest(s.folder, O, seed, { s.exit.zone })
 	connectSessionPrompts(s)
 	for _, p in ipairs(riders) do
 		local st = state[p]
 		st.session = s
+		st.introSeen = false
 		st.downed = false
 		freshInventory(p)
 		p:SetAttribute("InMatch", true)
@@ -1410,6 +1823,14 @@ function respawnAtClearing(p)
 		st.revivePrompt:Destroy()
 		st.revivePrompt = nil
 	end
+	if st.dragPrompt then
+		st.dragPrompt:Destroy()
+		st.dragPrompt = nil
+	end
+	if st.draggedBy then
+		stopDrag(st.draggedBy)
+	end
+	stopDrag(p)
 	p:LoadCharacter()
 end
 
@@ -1655,6 +2076,7 @@ local function onCharacter(p, char)
 		end
 	end
 	hum.BreakJointsOnDeath = false
+	hum.RequiresNeck = false
 	hum.WalkSpeed = Config.WalkSpeed
 	if classOf(p) == "warrior" then
 		hum.MaxHealth = 140
@@ -1697,6 +2119,13 @@ for _, p in ipairs(Players:GetPlayers()) do
 	task.spawn(onPlayer, p)
 end
 Players.PlayerRemoving:Connect(function(p)
+	local st = state[p]
+	if st then
+		stopDrag(p)
+		if st.draggedBy then
+			stopDrag(st.draggedBy)
+		end
+	end
 	leaveSession(p)
 	saveProfile(p)
 	state[p] = nil
@@ -1720,8 +2149,8 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 			addRes(p, k, k == "key" and 1 or 30)
 		end
 		notify(p, "[Тест] +30 всех ресурсов и Ключ")
-	elseif action == "toexit" and s and s.maze.exitOut then
-		place(p, s.maze.exitOut * CFrame.new(0, 4, -30), false)
+	elseif action == "toexit" and s and s.exit then
+		place(p, s.exit.exitOut * CFrame.new(0, 4, 8), false)
 	elseif action == "coins" then
 		addCoins(p, 500)
 	elseif action == "down" and s then

@@ -21,6 +21,7 @@ local armLen = { right = 2.4, left = 2.4 }
 local itemModel, itemId
 local swingT, swingKind, punchLeft
 local equipT = 1
+local cardT, cardPart
 local sway = CFrame.new()
 local lastCam
 local bobT = 0
@@ -144,6 +145,34 @@ function Viewmodel.swing(kind)
 	return true
 end
 
+-- достать ключ-карту из кармана и приложить к считывателю
+function Viewmodel.card()
+	cardT = 0
+	if cardPart then
+		cardPart:Destroy()
+	end
+	local c = Instance.new("Part")
+	c.Name = "KeyCard"
+	c.Size = Vector3.new(1.1, 0.06, 1.6)
+	c.Color = RGB(240, 240, 235)
+	c.Material = Enum.Material.SmoothPlastic
+	c.Anchored = true
+	c.CanCollide = false
+	c.CanQuery = false
+	c.CastShadow = false
+	local stripe = Instance.new("Part")
+	stripe.Name = "Stripe"
+	stripe.Size = Vector3.new(1.12, 0.07, 0.3)
+	stripe.Color = RGB(255, 200, 60)
+	stripe.Material = Enum.Material.Neon
+	stripe.Anchored = true
+	stripe.CanCollide = false
+	stripe.CanQuery = false
+	stripe.Parent = c
+	c.Parent = vm or workspace.CurrentCamera
+	cardPart = c
+end
+
 local function setVisible(on)
 	if not vm then
 		return
@@ -159,6 +188,10 @@ local function setVisible(on)
 			d.Enabled = on
 		end
 	end
+end
+
+local function smooth01(a)
+	return a * a * (3 - 2 * a)
 end
 
 local function ease(a)
@@ -239,6 +272,7 @@ function Viewmodel.update(dt, visible, moving, sprinting)
 	if not vm or vm.Parent ~= workspace.CurrentCamera then
 		Viewmodel.rebuild()
 	end
+	visible = visible or cardT ~= nil
 	setVisible(visible)
 	if not visible then
 		return
@@ -292,6 +326,36 @@ function Viewmodel.update(dt, visible, moving, sprinting)
 	local grip = placeArm("right", rShoulder)
 	placeArm("left", lShoulder)
 
+	if cardT then
+		-- рука идёт снизу из кармана, вытягивается вперёд и прикладывает карту
+		cardT += dt / 1.6
+		local up = smooth01(math.min(1, cardT / 0.45))
+		local poke = cardT > 0.55 and math.sin(math.min(1, (cardT - 0.55) / 0.35) * math.pi) * 0.6 or 0
+		local sh = base * CFrame.new(0.7, -1.6 + up * 0.55, 0.2 - poke) * CFrame.Angles(math.rad(40 + 58 * up), math.rad(-22 * up), 0)
+		local g = placeArm("right", sh)
+		if itemModel then
+			for _, d in ipairs(itemModel:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.LocalTransparencyModifier = 1
+				end
+			end
+		end
+		if cardPart then
+			cardPart.CFrame = g * CFrame.new(0, -0.4, -0.2) * CFrame.Angles(0, 0, math.rad(90))
+			local stripe = cardPart:FindFirstChild("Stripe")
+			if stripe then
+				stripe.CFrame = cardPart.CFrame * CFrame.new(0, 0, -0.5)
+			end
+		end
+		if cardT >= 1 then
+			cardT = nil
+			if cardPart then
+				cardPart:Destroy()
+				cardPart = nil
+			end
+		end
+		return
+	end
 	if itemModel then
 		itemModel:PivotTo(grip * hold(kindOf()))
 	end

@@ -8,7 +8,8 @@ Config.GameTitle = "ЛАБИРИНТ"
 Config.DevTools = true
 
 Config.Maze = {
-	Cells = 41, -- лабиринт 41 x 41 клеток (41 x 32 = 1312 studs)
+	Cells = 45, -- сетка 45 x 45 клеток, но лабиринт круглый (как в фильме)
+	Radius = 22.4, -- радиус круга в клетках (≈ 1430 studs в поперечнике)
 	CellSize = 32, -- ширина коридора
 	WallHeight = 56,
 	WallThickness = 4,
@@ -19,7 +20,7 @@ Config.Maze = {
 	Cracks = 44, -- узкие щели в стенах (пролезть можно только пригнувшись)
 }
 Config.GateWidth = 32
-Config.SlotSpacing = 3000 -- у каждой группы свой лабиринт, далеко друг от друга
+Config.SlotSpacing = 6000 -- у каждой группы свой лабиринт, далеко друг от друга
 
 -- Сложность: выбирается лифтом в лобби
 Config.Difficulty = {

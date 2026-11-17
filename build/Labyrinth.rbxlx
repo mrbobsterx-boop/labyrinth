@@ -38,7 +38,8 @@ local G = Building.Grid
 Building.Pieces = {
 	{ Id = "foundation", Name = "Фундамент", Cost = { planks = 6 }, Size = V(8, 3, 8) },
 	{ Id = "wall", Name = "Стена", Cost = { planks = 4 }, Size = V(8, 8, 0.8), Edge = true },
-	{ Id = "doorway", Name = "Проём с дверью", Cost = { planks = 6 }, Size = V(8, 8, 0.8), Edge = true },
+	{ Id = "doorway", Name = "Дверной проём", Cost = { planks = 5 }, Size = V(8, 8, 0.8), Edge = true },
+	{ Id = "door", Name = "Дверь (в проём)", Cost = { planks = 3 }, Size = V(3.6, 6.2, 0.4), Door = true },
 	{ Id = "window", Name = "Стена с окном", Cost = { planks = 4 }, Size = V(8, 8, 0.8), Edge = true },
 	{ Id = "floor", Name = "Перекрытие / крыша", Cost = { planks = 4 }, Size = V(8, 0.8, 8) },
 	{ Id = "stairs", Name = "Лестница", Cost = { planks = 5 }, Size = V(7.6, 8, 8) },
@@ -67,6 +68,9 @@ function Building.cframe(id, O, a)
 	elseif id == "stairs" then
 		return CFrame.new(O + V((a.cx + 0.5) * G, a.y + 4, (a.cz + 0.5) * G)) * CFrame.Angles(0, (a.rot or 0) * math.pi / 2, 0)
 	else
+		if id == "door" then
+			return Building.cframe("wall", O, a) * CFrame.new(0, -0.9, 0)
+		end
 		if a.axis == "X" then
 			return CFrame.new(O + V((a.ex + 0.5) * G, a.y + 4, a.ez * G))
 		else
@@ -78,7 +82,9 @@ end
 -- уникальный ключ места (две детали в одно место поставить нельзя)
 function Building.key(id, a)
 	local y = math.floor(a.y * 2 + 0.5)
-	if Building.ById[id].Edge then
+	if id == "door" then
+		return "D:" .. a.ex .. ":" .. a.ez .. ":" .. a.axis .. ":" .. y
+	elseif Building.ById[id].Edge then
 		return "E:" .. a.ex .. ":" .. a.ez .. ":" .. a.axis .. ":" .. y
 	elseif id == "stairs" then
 		return "S:" .. a.cx .. ":" .. a.cz .. ":" .. y
@@ -124,7 +130,12 @@ function Building.snap(id, O, pos, hitInst, look, pieces)
 	flat = flat.Magnitude > 0.01 and flat.Unit or V(0, 0, -1)
 	local pk = piece and piece:GetAttribute("BKind")
 	local def = Building.ById[id]
-	if id == "foundation" then
+	if id == "door" then
+		if pk == "doorway" or pk == "door" then
+			return { ex = piece:GetAttribute("EX"), ez = piece:GetAttribute("EZ"), axis = piece:GetAttribute("Axis"), y = piece:GetAttribute("Base") }
+		end
+		return nil
+	elseif id == "foundation" then
 		if pk == "foundation" then
 			local dx, dz = dominant(flat)
 			return { cx = piece:GetAttribute("CX") + dx, cz = piece:GetAttribute("CZ") + dz, y = piece:GetAttribute("Top") }
@@ -202,7 +213,8 @@ Config.GameTitle = "ЛАБИРИНТ"
 Config.DevTools = true
 
 Config.Maze = {
-	Cells = 41, -- лабиринт 41 x 41 клеток (41 x 32 = 1312 studs)
+	Cells = 45, -- сетка 45 x 45 клеток, но лабиринт круглый (как в фильме)
+	Radius = 22.4, -- радиус круга в клетках (≈ 1430 studs в поперечнике)
 	CellSize = 32, -- ширина коридора
 	WallHeight = 56,
 	WallThickness = 4,
@@ -213,7 +225,7 @@ Config.Maze = {
 	Cracks = 44, -- узкие щели в стенах (пролезть можно только пригнувшись)
 }
 Config.GateWidth = 32
-Config.SlotSpacing = 3000 -- у каждой группы свой лабиринт, далеко друг от друга
+Config.SlotSpacing = 6000 -- у каждой группы свой лабиринт, далеко друг от друга
 
 -- Сложность: выбирается лифтом в лобби
 Config.Difficulty = {
@@ -285,6 +297,80 @@ return Config
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="6">
+        <Properties>
+          <string name="Name">Deployables</string>
+          <string name="Source"><![CDATA[-- Модели предметов, которые ставятся в мир: верстак, кровать, сундук.
+-- Одни и те же модели — и настоящие (сервер), и прозрачный предпросмотр (клиент).
+
+local Deployables = {}
+
+local V = Vector3.new
+local RGB = Color3.fromRGB
+local M = Enum.Material
+local WOOD = RGB(92, 64, 40)
+
+Deployables.Names = {
+	workbench = "Верстак",
+	bed = "Кровать",
+	chest = "Сундук",
+}
+
+local function box(m, name, cf, size, color, material)
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	p.Size = size
+	p.CFrame = cf
+	p.Color = color
+	p.Material = material
+	p.Parent = m
+	return p
+end
+
+-- cf — точка на земле, модель «смотрит» по -Z
+function Deployables.build(id, cf)
+	local m = Instance.new("Model")
+	m.Name = id
+	m.WorldPivot = cf
+	if id == "workbench" then
+		box(m, "Top", cf * CFrame.new(0, 3.45, 0), V(8, 0.5, 4), RGB(110, 80, 50), M.WoodPlanks)
+		for _, x in ipairs({ -3.5, 3.5 }) do
+			for _, z in ipairs({ -1.5, 1.5 }) do
+				box(m, "Leg", cf * CFrame.new(x, 1.6, z), V(0.6, 3.2, 0.6), WOOD, M.Wood)
+			end
+		end
+		box(m, "Shelf", cf * CFrame.new(0, 1, 0), V(7.4, 0.3, 3.4), WOOD, M.WoodPlanks)
+		box(m, "Vise", cf * CFrame.new(3, 4.1, -1), V(1.1, 0.9, 1), RGB(70, 72, 76), M.Metal)
+		box(m, "Saw", cf * CFrame.new(-1.7, 3.75, 0.9), V(2.5, 0.1, 0.8), RGB(170, 170, 175), M.Metal)
+		box(m, "Hammer", cf * CFrame.new(0.8, 3.8, -1.05), V(1.6, 0.25, 0.3), WOOD, M.Wood)
+	elseif id == "bed" then
+		box(m, "Frame", cf * CFrame.new(0, 0.6, 0), V(4, 1.2, 7.5), RGB(100, 70, 44), M.Wood)
+		box(m, "Mattress", cf * CFrame.new(0, 1.45, 0.2), V(3.6, 0.6, 7), RGB(200, 190, 170), M.Fabric)
+		box(m, "Blanket", cf * CFrame.new(0, 1.8, 1.3), V(3.7, 0.25, 4.6), RGB(120, 50, 45), M.Fabric)
+		box(m, "Pillow", cf * CFrame.new(0, 1.9, -2.6), V(2.6, 0.5, 1.2), RGB(235, 230, 220), M.Fabric)
+		box(m, "Headboard", cf * CFrame.new(0, 2, -3.6), V(4, 2.8, 0.4), RGB(100, 70, 44), M.Wood)
+	elseif id == "chest" then
+		box(m, "Body", cf * CFrame.new(0, 1, 0), V(4.4, 2, 2.6), RGB(110, 76, 46), M.WoodPlanks)
+		box(m, "Lid", cf * CFrame.new(0, 2.3, 0), V(4.6, 0.6, 2.8), RGB(90, 60, 36), M.WoodPlanks)
+		box(m, "Lock", cf * CFrame.new(0, 1.9, -1.45), V(0.6, 0.7, 0.2), RGB(200, 170, 60), M.Metal)
+	end
+	return m
+end
+
+-- размер «коробки» для проверки, влезает ли предмет
+Deployables.Size = {
+	workbench = V(8, 4.4, 4),
+	bed = V(4, 3, 7.6),
+	chest = V(4.6, 2.6, 2.8),
+}
+
+return Deployables
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="7">
         <Properties>
           <string name="Name">ItemModels</string>
           <string name="Source"><![CDATA[-- 3D-модели инструментов и оружия. Используются и в руках персонажа (видят другие игроки),
@@ -407,7 +493,7 @@ return ItemModels
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="7">
+      <Item class="ModuleScript" referent="8">
         <Properties>
           <string name="Name">Items</string>
           <string name="Source"><![CDATA[-- Ресурсы, инструменты, оружие и рецепты.
@@ -424,10 +510,11 @@ Items.Resources = {
 	berry = { Name = "Ягоды (H — съесть)", Order = 7 },
 	bandage = { Name = "Бинт (поднять друга)", Order = 8 },
 	planks = { Name = "Доски", Order = 9 },
-	key = { Name = "КЛЮЧ-КАРТА ВЫХОДА", Order = 10 },
+	map = { Name = "Карта лабиринта (Tab)", Order = 10 },
+	key = { Name = "КЛЮЧ-КАРТА ВЫХОДА", Order = 11 },
 }
 
--- Kind: pickaxe / axe / sword / spear / torch / blueprint / hammer. Tier — что может добывать.
+-- Kind: pickaxe / axe / sword / spear / torch / blueprint / hammer / deploy. Tier — что может добывать.
 Items.Tools = {
 	fists = { Name = "Кулаки", Kind = "fists", Tier = 0, Damage = 5, Range = 7 },
 	wood_pickaxe = { Name = "Деревянная кирка", Kind = "pickaxe", Tier = 1, Damage = 6, Range = 9, Color = { 120, 85, 50 } },
@@ -442,18 +529,21 @@ Items.Tools = {
 	torch = { Name = "Факел", Kind = "torch", Tier = 0, Damage = 0, Range = 0, Color = { 255, 150, 60 } },
 	blueprint = { Name = "Чертёж (строить)", Kind = "blueprint", Tier = 0, Damage = 0, Range = 0, Color = { 70, 110, 190 } },
 	hammer = { Name = "Молоток (улучшать)", Kind = "hammer", Tier = 0, Damage = 4, Range = 10, Color = { 110, 110, 115 } },
+	deploy_workbench = { Name = "Верстак (поставить)", Kind = "deploy", Deploy = "workbench", Tier = 0, Damage = 0, Range = 0 },
+	deploy_bed = { Name = "Кровать (поставить)", Kind = "deploy", Deploy = "bed", Tier = 0, Damage = 0, Range = 0 },
+	deploy_chest = { Name = "Сундук (поставить)", Kind = "deploy", Deploy = "chest", Tier = 0, Damage = 0, Range = 0 },
 }
 
 -- Station: nil — крафт из инвентаря (C), "bench" — нужен верстак рядом (Level — его уровень)
 Items.Recipes = {
-	{ Id = "workbench", Name = "Верстак (поставить перед собой)", Cost = { wood = 12, stone = 4 }, Place = "workbench" },
+	{ Id = "deploy_workbench", Name = "Верстак", Cost = { wood = 12, stone = 4 } },
 	{ Id = "bandage", Name = "Бинт", Cost = { fiber = 3 }, Res = "bandage" },
 	{ Id = "torch", Cost = { wood = 3, fiber = 1 } },
 	{ Id = "planks", Name = "Доски ×4", Cost = { wood = 3 }, Res = "planks", Amount = 4 },
 	{ Id = "blueprint", Cost = { planks = 4 } },
 	{ Id = "hammer", Cost = { wood = 3, stone = 2 } },
-	{ Id = "bed", Name = "Кровать (поставить; ночью — проспать ночь)", Cost = { planks = 8, fiber = 6 }, Place = "bed" },
-	{ Id = "chest", Name = "Сундук-хранилище (поставить)", Cost = { planks = 10 }, Place = "chest" },
+	{ Id = "deploy_bed", Name = "Кровать (ночью — проспать ночь)", Cost = { planks = 8, fiber = 6 } },
+	{ Id = "deploy_chest", Name = "Сундук-хранилище", Cost = { planks = 10 } },
 	{ Id = "stone_pickaxe", Station = "bench", Level = 1, Cost = { wood = 5, stone = 8 } },
 	{ Id = "stone_axe", Station = "bench", Level = 1, Cost = { wood = 5, stone = 6 } },
 	{ Id = "spear", Station = "bench", Level = 1, Cost = { wood = 8, stone = 3, fiber = 2 } },
@@ -481,7 +571,7 @@ return Items
 ]]></string>
         </Properties>
       </Item>
-      <Item class="LocalScript" referent="8">
+      <Item class="LocalScript" referent="9">
         <Properties>
           <string name="Name">R6Animate</string>
           <string name="Source"><![CDATA[-- Анимации квадратного (R6) персонажа: стоять, идти, прыгать, падать.
@@ -559,15 +649,15 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="9">
+  <Item class="ServerScriptService" referent="10">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="10">
+    <Item class="Folder" referent="11">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="ModuleScript" referent="11">
+      <Item class="ModuleScript" referent="12">
         <Properties>
           <string name="Name">Build</string>
           <string name="Source"><![CDATA[-- Постройки игроков: детали дома (по сетке), кровать, сундук.
@@ -578,6 +668,7 @@ local TweenService = game:GetService("TweenService")
 
 local Parts = require(script.Parent.Parts)
 local Building = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Building"))
+local Deployables = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Deployables"))
 
 local Build = {}
 
@@ -596,17 +687,77 @@ local function prompt(part, action, object, hold, dist)
 	return p
 end
 
--- перекрасить деталь под уровень
-function Build.setTier(model, tier)
+local TIER_FX = { [1] = RGB(150, 110, 70), [2] = RGB(170, 170, 165), [3] = RGB(200, 210, 225) }
+
+-- перекрасить деталь под уровень (animate — с анимацией улучшения)
+function Build.setTier(model, tier, animate)
 	local t = Building.Tiers[tier]
 	model:SetAttribute("Tier", tier)
 	model:SetAttribute("HP", t.HP)
 	for _, d in ipairs(model:GetChildren()) do
-		if d:IsA("BasePart") and d.Name ~= "Door" and d.Name ~= "Handle" then
+		if d:IsA("BasePart") and d.Name ~= "Handle" then
 			d.Color = t.Color
 			d.Material = t.Material
 			d.Transparency = tier == 0 and 0.15 or 0
+			if animate then
+				-- «толчок»: деталь чуть раздувается и встаёт на место, летит пыль
+				local size = d.Size
+				d.Size = size * 1.06
+				TweenService:Create(d, TweenInfo.new(0.35, Enum.EasingStyle.Back), { Size = size }):Play()
+			end
 		end
+	end
+	if animate then
+		local main = model:FindFirstChildWhichIsA("BasePart")
+		if main then
+			local fx = Instance.new("ParticleEmitter")
+			fx.Color = ColorSequence.new(TIER_FX[tier] or RGB(200, 200, 200))
+			fx.Size = NumberSequence.new(1.2, 0)
+			fx.Lifetime = NumberRange.new(0.5, 0.9)
+			fx.Speed = NumberRange.new(6, 12)
+			fx.SpreadAngle = Vector2.new(180, 180)
+			fx.Rate = 0
+			fx.Parent = main
+			fx:Emit(30)
+			task.delay(1.5, function()
+				fx:Destroy()
+			end)
+		end
+	end
+end
+
+-- деталь «собирается»: части поднимаются из земли, доски слетаются к центру
+local function buildAnimation(model)
+	local parts = {}
+	for _, d in ipairs(model:GetChildren()) do
+		if d:IsA("BasePart") then
+			table.insert(parts, d)
+		end
+	end
+	for k, d in ipairs(parts) do
+		local final, tr = d.CFrame, d.Transparency
+		d.CFrame = final * CFrame.new(0, -math.min(d.Size.Y, 4) * 0.7, 0)
+		d.Transparency = 1
+		task.delay((k - 1) * 0.06, function()
+			TweenService:Create(d, TweenInfo.new(0.45, Enum.EasingStyle.Back), { CFrame = final, Transparency = tr }):Play()
+		end)
+	end
+	local cf = model:GetBoundingBox()
+	for k = 1, 5 do
+		local plank = Instance.new("Part")
+		plank.Anchored = true
+		plank.CanCollide = false
+		plank.CanQuery = false
+		plank.Size = V(3, 0.3, 0.8)
+		plank.Color = RGB(205, 180, 125)
+		plank.Material = M.WoodPlanks
+		local a = k / 5 * math.pi * 2
+		plank.CFrame = cf * CFrame.new(math.cos(a) * 6, 4, math.sin(a) * 6) * CFrame.Angles(a, a * 2, 0)
+		plank.Parent = model
+		TweenService:Create(plank, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = cf, Transparency = 1 }):Play()
+		task.delay(0.45, function()
+			plank:Destroy()
+		end)
 	end
 end
 
@@ -620,7 +771,7 @@ function Build.piece(parent, id, O, a)
 	m:SetAttribute("Key", Building.key(id, a))
 	m:SetAttribute("Base", a.y)
 	m:SetAttribute("Top", Building.top(id, a))
-	if def.Edge then
+	if def.Edge or def.Door then
 		m:SetAttribute("EX", a.ex)
 		m:SetAttribute("EZ", a.ez)
 		m:SetAttribute("Axis", a.axis)
@@ -646,9 +797,10 @@ function Build.piece(parent, id, O, a)
 		part("Wall", CFrame.new(-2.9, 0, 0), V(2.2, 8, 0.8))
 		part("Wall", CFrame.new(2.9, 0, 0), V(2.2, 8, 0.8))
 		part("Wall", CFrame.new(0, 3.1, 0), V(3.6, 1.8, 0.8))
-		-- дверь на петлях (левый край)
-		local hinge = cf * CFrame.new(-1.8, -0.9, 0)
-		local door = Parts.box(m, "Door", hinge * CFrame.new(1.8, 0, 0), V(3.6, 6.2, 0.4), RGB(96, 64, 40), M.Wood)
+	elseif id == "door" then
+		-- дверь на петлях (левый край), E — открыть/закрыть
+		local hinge = cf * CFrame.new(-1.8, 0, 0)
+		local door = part("Door", CFrame.new(), def.Size)
 		local handle = Parts.box(m, "Handle", hinge * CFrame.new(3.1, 0, -0.35), V(0.25, 0.6, 0.25), RGB(40, 40, 40), M.Metal, { CanCollide = false })
 		local open = false
 		local pr = prompt(door, "Открыть", "Дверь", 0, 8)
@@ -671,19 +823,14 @@ function Build.piece(parent, id, O, a)
 	CollectionService:AddTag(m, "BuildPiece")
 	Build.setTier(m, 0)
 	m.Parent = parent
+	buildAnimation(m)
 	return m
 end
 
 -- кровать: лечь и проспать ночь
 function Build.bed(parent, cf)
-	local m = Instance.new("Model")
+	local m = Deployables.build("bed", cf)
 	m.Name = "Bed"
-	local wood = RGB(100, 70, 44)
-	Parts.box(m, "Frame", cf * CFrame.new(0, 0.6, 0), V(4, 1.2, 7.5), wood, M.Wood)
-	Parts.box(m, "Mattress", cf * CFrame.new(0, 1.45, 0.2), V(3.6, 0.6, 7), RGB(200, 190, 170), M.Fabric)
-	Parts.box(m, "Blanket", cf * CFrame.new(0, 1.8, 1.3), V(3.7, 0.25, 4.6), RGB(120, 50, 45), M.Fabric)
-	Parts.box(m, "Pillow", cf * CFrame.new(0, 1.9, -2.6), V(2.6, 0.5, 1.2), RGB(235, 230, 220), M.Fabric)
-	Parts.box(m, "Headboard", cf * CFrame.new(0, 2, -3.6), V(4, 2.8, 0.4), wood, M.Wood)
 	local pr = prompt(m:FindFirstChild("Mattress"), "Лечь спать", "Кровать", 0.4, 8)
 	m:SetAttribute("SleepCF", cf * CFrame.new(0, 2.6, 0.4))
 	m.Parent = parent
@@ -692,12 +839,9 @@ end
 
 -- сундук-хранилище
 function Build.chest(parent, cf)
-	local m = Instance.new("Model")
+	local m = Deployables.build("chest", cf)
 	m.Name = "StorageChest"
-	local wood = RGB(110, 76, 46)
-	local body = Parts.box(m, "Body", cf * CFrame.new(0, 1, 0), V(4.4, 2, 2.6), wood, M.WoodPlanks)
-	Parts.box(m, "Lid", cf * CFrame.new(0, 2.3, 0), V(4.6, 0.6, 2.8), RGB(90, 60, 36), M.WoodPlanks)
-	Parts.box(m, "Lock", cf * CFrame.new(0, 1.9, -1.45), V(0.6, 0.7, 0.2), RGB(200, 170, 60), M.Metal)
+	local body = m:FindFirstChild("Body")
 	local put = prompt(body, "Положить всё", "Сундук (пусто)", 0.3, 9)
 	local take = prompt(body, "Забрать всё", "Сундук", 0.3, 9)
 	take.KeyboardKeyCode = Enum.KeyCode.F
@@ -710,7 +854,7 @@ return Build
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Script" referent="12">
+      <Item class="Script" referent="13">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -750,6 +894,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -926,6 +1071,12 @@ local function place(p, cf, anchored)
 end
 
 local function inSafeZone(s, pos)
+	if s.exit then
+		local lp = s.exit.zone.cf:PointToObjectSpace(pos)
+		if math.abs(lp.X) < s.exit.zone.size.X / 2 and math.abs(lp.Z) < s.exit.zone.size.Z / 2 then
+			return true
+		end
+	end
 	local h = World.CLEARING_HALF - 3
 	local rel = pos - s.O
 	return math.abs(rel.X) < h and math.abs(rel.Z) < h and rel.Y > -20 and rel.Y < 300
@@ -980,6 +1131,119 @@ end)
 ------------------------------------------------------------------
 local respawnAtClearing
 
+-- тряпичная кукла: суставы становятся шарнирами, тело падает и болтается
+local function setRagdoll(char, on)
+	local torso = char and char:FindFirstChild("Torso")
+	if not torso then
+		return
+	end
+	for _, d in ipairs(char:GetDescendants()) do
+		if d.Name == "RagJoint" or d.Name == "RagAtt" then
+			d:Destroy()
+		end
+	end
+	for _, m in ipairs(torso:GetChildren()) do
+		if m:IsA("Motor6D") and m.Part0 and m.Part1 then
+			if on then
+				local a0 = Instance.new("Attachment")
+				a0.Name = "RagAtt"
+				a0.CFrame = m.C0
+				a0.Parent = m.Part0
+				local a1 = Instance.new("Attachment")
+				a1.Name = "RagAtt"
+				a1.CFrame = m.C1
+				a1.Parent = m.Part1
+				local bs = Instance.new("BallSocketConstraint")
+				bs.Name = "RagJoint"
+				bs.Attachment0 = a0
+				bs.Attachment1 = a1
+				bs.LimitsEnabled = true
+				bs.UpperAngle = m.Name == "Neck" and 35 or 75
+				bs.TwistLimitsEnabled = true
+				bs.TwistLowerAngle = -40
+				bs.TwistUpperAngle = 40
+				bs.Parent = torso
+			end
+			m.Enabled = not on
+			if m.Part1.Name ~= "Head" then
+				m.Part1.CanCollide = on
+			end
+		end
+	end
+end
+
+local function stopDrag(dragger)
+	local dst = state[dragger]
+	local victim = dst and dst.dragging
+	if not victim then
+		return
+	end
+	dst.dragging = nil
+	dragger:SetAttribute("Dragging", false)
+	if dst.dragRope then
+		dst.dragRope:Destroy()
+		dst.dragRope = nil
+	end
+	for _, a in ipairs(dst.dragAtts or {}) do
+		a:Destroy()
+	end
+	dst.dragAtts = nil
+	local vst = state[victim]
+	if vst then
+		vst.draggedBy = nil
+	end
+	local char = victim.Character
+	if char then
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") then
+				pcall(function()
+					d:SetNetworkOwner(victim)
+				end)
+			end
+		end
+	end
+end
+
+local function startDrag(dragger, victim)
+	local dst, vst = state[dragger], state[victim]
+	local dh = hrpOf(dragger)
+	local leg = victim.Character and (victim.Character:FindFirstChild("Right Leg") or victim.Character:FindFirstChild("RightLowerLeg"))
+	if not dst or not vst or not dh or not leg then
+		return
+	end
+	if vst.draggedBy then
+		notify(dragger, "Его уже тащит " .. vst.draggedBy.DisplayName)
+		return
+	end
+	dst.dragging = victim
+	vst.draggedBy = dragger
+	dragger:SetAttribute("Dragging", true)
+	local a0 = Instance.new("Attachment")
+	a0.Name = "DragAtt"
+	a0.Position = V(0.6, -1, 1.2)
+	a0.Parent = dh
+	local a1 = Instance.new("Attachment")
+	a1.Name = "DragAtt"
+	a1.Position = V(0, -leg.Size.Y / 2 + 0.2, 0)
+	a1.Parent = leg
+	local rope = Instance.new("RopeConstraint")
+	rope.Attachment0 = a0
+	rope.Attachment1 = a1
+	rope.Length = 3.5
+	rope.Restitution = 0
+	rope.Parent = dh
+	dst.dragRope, dst.dragAtts = rope, { a0, a1 }
+	-- физику тела считает тот, кто тащит, — так оно не дёргается
+	for _, d in ipairs(victim.Character:GetDescendants()) do
+		if d:IsA("BasePart") then
+			pcall(function()
+				d:SetNetworkOwner(dragger)
+			end)
+		end
+	end
+	notify(dragger, "Ты тащишь " .. victim.DisplayName .. " за ногу. F — отпустить.")
+end
+
 local function setDownedVisual(p, on)
 	local _, char = hrpOf(p)
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -987,6 +1251,13 @@ local function setDownedVisual(p, on)
 		hum.PlatformStand = on
 		hum.WalkSpeed = on and 0 or Config.WalkSpeed
 		hum.JumpPower = on and 0 or 50
+	end
+	setRagdoll(char, on)
+	if not on then
+		local hrp = hrpOf(p)
+		if hrp then
+			hrp.CFrame = CFrame.new(hrp.Position + V(0, 2.5, 0)) * CFrame.Angles(0, select(2, hrp.CFrame:ToEulerAnglesYXZ()), 0)
+		end
 	end
 end
 
@@ -1000,6 +1271,13 @@ local function revive(p, by)
 	if st.revivePrompt then
 		st.revivePrompt:Destroy()
 		st.revivePrompt = nil
+	end
+	if st.dragPrompt then
+		st.dragPrompt:Destroy()
+		st.dragPrompt = nil
+	end
+	if st.draggedBy then
+		stopDrag(st.draggedBy)
 	end
 	setDownedVisual(p, false)
 	local _, char = hrpOf(p)
@@ -1031,6 +1309,7 @@ local function down(p)
 	end
 	st.downed = true
 	st.downedAt = os.clock()
+	stopDrag(p)
 	p:SetAttribute("Downed", true)
 	p:SetAttribute("DownedEnd", workspace:GetServerTimeNow() + Config.DownedTime)
 	setDownedVisual(p, true)
@@ -1050,11 +1329,34 @@ local function down(p)
 				return
 			end
 			if (bst.res.bandage or 0) < 1 then
-				notify(by, "Нужен бинт! Сделай его из травы (C → Бинт).")
+				notify(by, "Нужен бинт! Сделай его из травы (C → Бинт). Или тащи друга за ногу (F).")
 				return
 			end
 			addRes(by, "bandage", -1)
 			revive(p, by)
+		end)
+		-- тащить за ногу (F)
+		local dp = Instance.new("ProximityPrompt")
+		dp.ActionText = "Тащить за ногу"
+		dp.ObjectText = p.DisplayName
+		dp.KeyboardKeyCode = Enum.KeyCode.F
+		dp.GamepadKeyCode = Enum.KeyCode.ButtonY
+		dp.HoldDuration = 0.3
+		dp.MaxActivationDistance = 9
+		dp.RequiresLineOfSight = false
+		dp.UIOffset = Vector2.new(0, 80)
+		dp.Parent = hrp
+		st.dragPrompt = dp
+		dp.Triggered:Connect(function(by)
+			local bst = state[by]
+			if by == p or not bst or bst.session ~= s or bst.downed then
+				return
+			end
+			if bst.dragging == p then
+				stopDrag(by)
+			elseif not bst.dragging then
+				startDrag(by, p)
+			end
 		end)
 	end
 	for _, other in ipairs(s.players) do
@@ -1288,7 +1590,7 @@ R.Swing.OnServerEvent:Connect(function(p, hit, hitPos)
 		for k, n in pairs(t.Cost) do
 			addRes(p, k, -n)
 		end
-		Build.setTier(piece, tier)
+		Build.setTier(piece, tier, true)
 		R.HitMarker:FireClient(p, "node", "axe")
 		notify(p, piece.Name .. " → " .. t.Name)
 		return
@@ -1332,6 +1634,7 @@ end)
 -- Крафт: из инвентаря (C) и на верстаке
 ------------------------------------------------------------------
 local connectBed, connectChest
+local sendMap
 local function recipeById(id)
 	for _, r in ipairs(Items.Recipes) do
 		if r.Id == id then
@@ -1502,7 +1805,7 @@ R.Build.OnServerEvent:Connect(function(p, id, a)
 	end
 	-- проверка параметров
 	local ok = typeof(a.y) == "number" and a.y == a.y and math.abs(a.y) < 400
-	if def.Edge then
+	if def.Edge or def.Door then
 		ok = ok and typeof(a.ex) == "number" and typeof(a.ez) == "number" and (a.axis == "X" or a.axis == "Z")
 		ok = ok and a.ex % 1 == 0 and a.ez % 1 == 0
 	else
@@ -1516,6 +1819,13 @@ R.Build.OnServerEvent:Connect(function(p, id, a)
 	if s.pieces[key] and s.pieces[key].Parent then
 		notify(p, "Здесь уже стоит постройка")
 		return
+	end
+	if id == "door" then
+		local frame = s.pieces[Building.key("doorway", args)]
+		if not frame or not frame.Parent or frame:GetAttribute("BKind") ~= "doorway" then
+			notify(p, "Дверь ставится в дверной проём")
+			return
+		end
 	end
 	local cf = Building.cframe(id, s.O, args)
 	if (cf.Position - hrp.Position).Magnitude > 32 then
@@ -1555,6 +1865,125 @@ R.Build.OnServerEvent:Connect(function(p, id, a)
 	R.HitMarker:FireClient(p, "node", "axe")
 end)
 
+-- поставить верстак / кровать / сундук (с предпросмотром на клиенте)
+local Deployables = require(Shared:WaitForChild("Deployables"))
+R.Place.OnServerEvent:Connect(function(p, toolId, cf)
+	local st = state[p]
+	local s = st and st.session
+	local def = typeof(toolId) == "string" and Items.Tools[toolId]
+	local hrp = hrpOf(p)
+	if not s or not def or def.Kind ~= "deploy" or not table.find(st.tools, toolId) or typeof(cf) ~= "CFrame" or not hrp or st.downed then
+		return
+	end
+	if (cf.Position - hrp.Position).Magnitude > 24 then
+		return
+	end
+	-- только поворот вокруг вертикали
+	local _, yaw = cf:ToEulerAnglesYXZ()
+	cf = CFrame.new(cf.Position) * CFrame.Angles(0, yaw, 0)
+	local size = Deployables.Size[def.Deploy]
+	local op = OverlapParams.new()
+	op.RespectCanCollide = true
+	for _, part in ipairs(workspace:GetPartBoundsInBox(cf * CFrame.new(0, size.Y / 2 + 0.3, 0), size - V(0.3, 0.3, 0.3), op)) do
+		if not part:IsA("Terrain") then
+			notify(p, "Здесь не помещается: мешает " .. part.Name)
+			return
+		end
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { p.Character }
+	local g = workspace:Raycast(cf.Position + V(0, 2, 0), V(0, -5, 0), params)
+	if not g then
+		notify(p, "Ставить можно только на землю или пол")
+		return
+	end
+	table.remove(st.tools, table.find(st.tools, toolId))
+	if st.equipped == toolId then
+		st.equipped = nil
+		p:SetAttribute("Equipped", nil)
+		updateHeld(p)
+	end
+	p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
+	if def.Deploy == "workbench" then
+		local b = World.BuildWorkbench(s.folder, cf)
+		table.insert(s.benches, b)
+		connectBench(s, b)
+		notifySession(s, p.DisplayName .. " поставил верстак")
+	elseif def.Deploy == "bed" then
+		local bed, pr = Build.bed(s.folder, cf)
+		connectBed(s, bed, pr)
+		notify(p, "Кровать поставлена. Ночью ляг спать — если уснут все, ночь пройдёт.")
+	elseif def.Deploy == "chest" then
+		local chest, put, take = Build.chest(s.folder, cf)
+		connectChest(s, chest, put, take)
+		notify(p, "Сундук поставлен: E — положить всё, F — забрать всё.")
+	end
+	R.HitMarker:FireClient(p, "node", "axe")
+end)
+
+-- круговое меню молотка: сразу до выбранного уровня, или снести
+R.Upgrade.OnServerEvent:Connect(function(p, piece, tier)
+	local st = state[p]
+	local s = st and st.session
+	local hrp = hrpOf(p)
+	if not s or not hrp or st.downed or st.equipped ~= "hammer" or typeof(piece) ~= "Instance" or not piece:IsDescendantOf(s.buildFolder) then
+		return
+	end
+	local cf = piece:GetBoundingBox()
+	if (cf.Position - hrp.Position).Magnitude > 20 then
+		return
+	end
+	if tier == "remove" then
+		local def = Building.ById[piece:GetAttribute("BKind")]
+		for k, n in pairs(def and def.Cost or {}) do
+			addRes(p, k, math.floor(n / 2))
+		end
+		s.pieces[piece:GetAttribute("Key")] = nil
+		piece:Destroy()
+		notify(p, "Снесено (вернулась половина досок)")
+		return
+	end
+	local cur = piece:GetAttribute("Tier") or 0
+	local t = typeof(tier) == "number" and Building.Tiers[tier]
+	if not t or tier <= cur then
+		notify(p, "Уже не хуже, чем «" .. Building.Tiers[cur].Name .. "»")
+		return
+	end
+	for k, n in pairs(t.Cost) do
+		if (st.res[k] or 0) < n then
+			notify(p, "Для «" .. t.Name .. "» нужно: " .. Items.Resources[k].Name .. " " .. n)
+			return
+		end
+	end
+	for k, n in pairs(t.Cost) do
+		addRes(p, k, -n)
+	end
+	Build.setTier(piece, tier, true)
+	R.HitMarker:FireClient(p, "node", "axe")
+	notify(p, piece.Name .. " → " .. t.Name)
+end)
+
+-- раненый подаёт сигнал: 15 секунд друзья видят, где он, и стрелки к нему
+R.Ping.OnServerEvent:Connect(function(p)
+	local st = state[p]
+	if not st or not st.downed then
+		return
+	end
+	local now = os.clock()
+	if now - (st.lastPing or -100) < 20 then
+		return
+	end
+	st.lastPing = now
+	p:SetAttribute("PingUntil", workspace:GetServerTimeNow() + 15)
+	p:SetAttribute("PingNext", workspace:GetServerTimeNow() + 20)
+	for _, q in ipairs(st.session and st.session.players or {}) do
+		if q ~= p then
+			notify(q, p.DisplayName .. " зовёт на помощь! Иди по стрелкам.")
+		end
+	end
+end)
+
 R.Craft.OnServerEvent:Connect(function(p, id)
 	local st = state[p]
 	local s = st and st.session
@@ -1567,7 +1996,7 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 	if r.Station == "bench" then
 		bench = nearestBench(s, hrp.Position)
 		if not bench then
-			notify(p, "Нужен верстак рядом. Сделай его: C → Верстак.")
+			notify(p, "Нужен верстак рядом. Сделай его: C → Верстак, потом поставь.")
 			return
 		end
 		if r.Level > (bench.model:GetAttribute("Level") or 1) then
@@ -1588,7 +2017,8 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 	local function power(d)
 		return d.Kind == "sword" and d.Damage or d.Tier
 	end
-	if newDef and newDef.Kind ~= "torch" then
+	local unique = newDef and (newDef.Kind == "torch" or newDef.Kind == "deploy" or newDef.Kind == "blueprint" or newDef.Kind == "hammer")
+	if newDef and not unique then
 		for _, t in ipairs(st.tools) do
 			local d = Items.Tools[t]
 			if d and d.Kind == newDef.Kind and power(d) >= power(newDef) then
@@ -1641,7 +2071,7 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 		local slot
 		for i = #st.tools, 1, -1 do
 			local d = Items.Tools[st.tools[i]]
-			if d and newDef and d.Kind == newDef.Kind and newDef.Kind ~= "torch" then
+			if d and newDef and d.Kind == newDef.Kind and not unique then
 				if st.equipped == st.tools[i] then
 					st.equipped = r.Id
 				end
@@ -1655,7 +2085,7 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 			p:SetAttribute("Equipped", r.Id)
 			updateHeld(p)
 		end
-		notify(p, "Создано: " .. Items.toolName(r.Id) .. (slot and " (заменил старый)" or " (выбери цифрой)"))
+		notify(p, "Создано: " .. Items.toolName(r.Id) .. (slot and " (заменил старый)" or (newDef and newDef.Kind == "deploy") and " — возьми в руку, R — повернуть, ЛКМ — поставить" or " (выбери цифрой)"))
 	end
 end)
 
@@ -1739,7 +2169,7 @@ local function endSession(s)
 		end
 	end
 	s.folder:Destroy()
-	World.ClearTerrain(s.O)
+	World.ClearTerrain(s.O, s.exit and s.exit.pit)
 	usedSlots[s.slot] = nil
 	sessions[s] = nil
 end
@@ -1760,24 +2190,19 @@ local function leaveSession(p)
 	end
 end
 
-local function connectSessionPrompts(s)
-	s.clearing.supplyPrompt.Triggered:Connect(function(p)
-		local st = state[p]
-		if not st or st.session ~= s then
-			return
-		end
-		if st.gotSupply then
-			notify(p, "Ты уже забрал свои припасы")
-			return
-		end
-		st.gotSupply = true
-		addRes(p, "wood", 14)
-		addRes(p, "stone", 6)
-		addRes(p, "fiber", 3)
-		addRes(p, "berry", 3)
-		notify(p, "Припасы: +14 дерева, +6 камня, +3 травы, +3 ягоды. Нажми C — крафт.")
-	end)
-	for _, pr in ipairs(s.folder:GetDescendants()) do
+-- карта лабиринта: стены отправляются клиентам (рисуются по Tab)
+function sendMap(s)
+	local walls = {}
+	for _, w in ipairs(s.maze.mapWalls) do
+		table.insert(walls, { w[1] == "X" and 1 or 2, math.floor(w[2] * 10) / 10, math.floor(w[3] * 10) / 10, math.floor(w[4] * 10) / 10, w[5] })
+	end
+	for _, q in ipairs(s.players) do
+		R.MapData:FireClient(q, walls, s.O, World.CLEARING_HALF, World.RADIUS, s.exit.exitOut.Position - s.O)
+	end
+end
+
+local function connectPrompts(s, root, chests)
+	for _, pr in ipairs(root:GetDescendants()) do
 		if pr:IsA("ProximityPrompt") then
 			if CollectionService:HasTag(pr, "NodePrompt") then
 				pr.Triggered:Connect(function(p)
@@ -1839,6 +2264,20 @@ local function connectSessionPrompts(s)
 					end
 					notify(p, (pr.ObjectText ~= "" and pr.ObjectText or "Находка") .. ": " .. table.concat(got, ", "))
 				end)
+			elseif CollectionService:HasTag(pr, "MapPrompt") then
+				pr.Triggered:Connect(function(p)
+					local st = state[p]
+					if not st or st.session ~= s or s.mazeFixed.mapFound then
+						return
+					end
+					s.mazeFixed.mapFound = true
+					pr.Parent:Destroy()
+					for _, q in ipairs(s.players) do
+						addRes(q, "map", 1)
+					end
+					sendMap(s)
+					notifySession(s, p.DisplayName .. " нашёл КАРТУ ЛАБИРИНТА! Нажми Tab, чтобы открыть. Карта сама меняется вместе со стенами.")
+				end)
 			elseif CollectionService:HasTag(pr, "HidePrompt") then
 				local spot = pr.Parent
 				pr.Triggered:Connect(function(p)
@@ -1886,7 +2325,7 @@ local function connectSessionPrompts(s)
 			end
 		end
 	end
-	for _, c in ipairs(s.maze.chests) do
+	for _, c in ipairs(chests or {}) do
 		c.prompt.Triggered:Connect(function(p)
 			local st = state[p]
 			if not st or st.session ~= s then
@@ -1910,6 +2349,7 @@ local function connectSessionPrompts(s)
 					glow:Destroy()
 				end
 				gain("key", 1)
+				s.mazeFixed.keyTaken = true
 				gain("crystal", 3)
 				gain("iron", 5)
 				notifySession(s, p.DisplayName .. " нашёл КЛЮЧ-КАРТУ! Найдите выход и вставьте её в считыватель.")
@@ -1938,45 +2378,152 @@ local function connectSessionPrompts(s)
 			notify(p, "Сундук: " .. table.concat(got, ", "))
 		end)
 	end
-	if s.maze.exitPrompt then
-		s.maze.exitPrompt.Triggered:Connect(function(p)
-			local st = state[p]
-			if not st or st.session ~= s or s.won then
-				return
+end
+
+local function connectExit(s)
+	local ex = s.exit
+	-- подошёл к туннелю — ролик: идём по мосту к двери лаборатории
+	ex.trigger.Touched:Connect(function(hit)
+		local p = Players:GetPlayerFromCharacter(hit.Parent)
+		local st = p and state[p]
+		if not st or st.session ~= s or st.introSeen or st.downed or s.won then
+			return
+		end
+		st.introSeen = true
+		local hrp = hrpOf(p)
+		if hrp then
+			hrp.Anchored = true
+		end
+		R.ExitIntro:FireClient(p, ex.exitOut, ex.doorFront, ex.reader.Position)
+		task.delay(10, function()
+			if st.session == s and not s.won then
+				place(p, ex.doorFront, false)
 			end
-			local hasKey = false
+		end)
+	end)
+	ex.exitPrompt.Triggered:Connect(function(p)
+		local st = state[p]
+		if not st or st.session ~= s or s.won or st.downed then
+			return
+		end
+		if (st.res.key or 0) < 1 then
 			for _, q in ipairs(s.players) do
 				if state[q] and (state[q].res.key or 0) > 0 then
-					hasKey = true
+					notify(p, "Ключ-карта у " .. q.DisplayName .. " — пусть приложит её сам.")
+					return
 				end
 			end
-			if not hasKey then
-				notify(p, "Нужна ключ-карта — она в золотом сундуке в самом дальнем тупике (над ним светится ключ).")
-				return
-			end
-			s.won = true
-			clearMonsters(s, true)
-			if s.maze.readerLight then
-				s.maze.readerLight.Color = Color3.fromRGB(60, 255, 90)
-			end
-			notifySession(s, p.DisplayName .. " вставил ключ-карту! Ворота открываются...")
-			task.delay(1, function()
-				TweenService:Create(s.maze.exitDoor, TweenInfo.new(4, Enum.EasingStyle.Sine), { CFrame = s.maze.exitDoor.CFrame + V(0, 60, 0) }):Play()
-			end)
+			notify(p, "Нужна ключ-карта — она в золотом сундуке в самом дальнем тупике.")
+			return
+		end
+		s.won = true
+		clearMonsters(s, true)
+		local hrp = hrpOf(p)
+		if hrp then
+			hrp.Anchored = true
+		end
+		R.CardInsert:FireClient(p, ex.reader.Position)
+		task.delay(1.8, function()
+			ex.readerLight.Color = Color3.fromRGB(60, 255, 90)
+			notifySession(s, p.DisplayName .. " приложил ключ-карту! Дверь открывается...")
+			TweenService:Create(ex.exitDoor, TweenInfo.new(3, Enum.EasingStyle.Sine), { CFrame = ex.exitDoor.CFrame + V(0, 15.5, 0) }):Play()
 			local coins = Config.CoinsEscape * s.diff.Coins
 			for _, q in ipairs(s.players) do
 				addCoins(q, coins)
-				local hrp = hrpOf(q)
-				if hrp then
-					hrp.Anchored = true
+				local qh = hrpOf(q)
+				if qh then
+					qh.Anchored = true
 				end
-				R.Outro:FireClient(q, s.maze.helipad, s.maze.exitOut, s.players, s.day, coins, s.O)
+				R.Outro:FireClient(q, {
+					exitOut = ex.exitOut,
+					doorFront = ex.doorFront,
+					labStart = ex.labStart,
+					labEnd = ex.labEnd,
+					backDoor = ex.labBackDoor,
+					pad = ex.helipad,
+					mazeCenter = s.O,
+					players = s.players,
+					day = s.day,
+					coins = coins,
+				})
 			end
-			task.delay(35, function()
+			task.delay(48, function()
 				endSession(s)
 			end)
 		end)
+	end)
+end
+
+-- каждую ночь лабиринт перестраивается: другие коридоры, сундуки, шахты
+local function regenMaze(s)
+	local old = s.maze.model
+	s.maze = World.BuildMazeLayout(s.folder, math.random(1, 1e6), s.O, s.mazeFixed)
+	old:Destroy()
+	connectPrompts(s, s.maze.model, s.maze.chests)
+	sendMap(s)
+	-- новые стены раздавили постройки — убираем их
+	local op = OverlapParams.new()
+	op.FilterType = Enum.RaycastFilterType.Include
+	op.FilterDescendantsInstances = { s.maze.model }
+	for key, piece in pairs(s.pieces) do
+		if piece.Parent then
+			local cf, size = piece:GetBoundingBox()
+			for _, hitPart in ipairs(workspace:GetPartBoundsInBox(cf, size - V(0.5, 0.5, 0.5), op)) do
+				if hitPart.Name == "MazeWall" then
+					piece:Destroy()
+					s.pieces[key] = nil
+					break
+				end
+			end
+		end
 	end
+	-- игроков, оказавшихся в стене, выталкиваем в ближайший коридор
+	for _, q in ipairs(s.players) do
+		local hrp = hrpOf(q)
+		if hrp and not inSafeZone(s, hrp.Position) then
+			R.MazeShift:FireClient(q)
+			local stuck = false
+			for _, hitPart in ipairs(workspace:GetPartBoundsInBox(hrp.CFrame, V(2, 4, 2), op)) do
+				if hitPart.Name == "MazeWall" or hitPart.Name == "CrawlCover" then
+					stuck = true
+				end
+			end
+			if stuck then
+				local best, bd
+				for _, c in ipairs(s.maze.cells) do
+					local d = (c - hrp.Position).Magnitude
+					if not bd or d < bd then
+						best, bd = c, d
+					end
+				end
+				if best then
+					place(q, CFrame.new(best + V(0, 4, 0)), false)
+				end
+			end
+		end
+	end
+end
+
+local function connectSessionPrompts(s)
+	s.clearing.supplyPrompt.Triggered:Connect(function(p)
+		local st = state[p]
+		if not st or st.session ~= s then
+			return
+		end
+		if st.gotSupply then
+			notify(p, "Ты уже забрал свои припасы")
+			return
+		end
+		st.gotSupply = true
+		addRes(p, "wood", 14)
+		addRes(p, "stone", 6)
+		addRes(p, "fiber", 3)
+		addRes(p, "berry", 3)
+		notify(p, "Припасы: +14 дерева, +6 камня, +3 травы, +3 ягоды. Нажми C — крафт.")
+	end)
+	connectPrompts(s, s.clearing.model, {})
+	connectPrompts(s, s.maze.model, s.maze.chests)
+	connectExit(s)
 end
 
 local function sessionLoop(s)
@@ -2005,8 +2552,14 @@ local function sessionLoop(s)
 		end
 		setPhase(s, "night", s.diff.Night)
 		moveGates(s, true, 8)
+		task.delay(9, function()
+			if s.phase == "night" and not s.ended and not s.won then
+				regenMaze(s)
+				notifySession(s, "Земля дрожит... Стены лабиринта сдвинулись. Коридоры теперь другие.")
+			end
+		end)
 		notifySession(s, "Ночь. Врата закрылись. В лабиринте — Скрежетники...")
-		task.delay(6, function()
+		task.delay(11, function()
 			if s.phase == "night" and not s.won then
 				spawnMonsters(s)
 			end
@@ -2082,14 +2635,18 @@ local function startSession(riders, diffId)
 	local seed = math.random(1, 1e6)
 	World.BuildTerrain(O)
 	s.clearing = World.BuildClearing(s.folder, seed, O)
+	World.BuildClearingTerrain(O, s.clearing.lakeCenter)
 	s.gates = World.BuildClearingWalls(s.folder, O)
-	s.maze = World.BuildMaze(s.folder, seed + 7, O)
-	World.BuildWaterSurface(s.folder, O)
-	World.BuildOuterForest(s.folder, O, seed)
+	s.mazeFixed = { keyTaken = false, mapFound = false }
+	s.maze = World.BuildMazeLayout(s.folder, seed + 7, O, s.mazeFixed)
+	s.mazeFixed.exit = s.maze.exit
+	s.exit = World.BuildExit(s.folder, O, s.maze.exit)
+	World.BuildOuterForest(s.folder, O, seed, { s.exit.zone })
 	connectSessionPrompts(s)
 	for _, p in ipairs(riders) do
 		local st = state[p]
 		st.session = s
+		st.introSeen = false
 		st.downed = false
 		freshInventory(p)
 		p:SetAttribute("InMatch", true)
@@ -2126,6 +2683,14 @@ function respawnAtClearing(p)
 		st.revivePrompt:Destroy()
 		st.revivePrompt = nil
 	end
+	if st.dragPrompt then
+		st.dragPrompt:Destroy()
+		st.dragPrompt = nil
+	end
+	if st.draggedBy then
+		stopDrag(st.draggedBy)
+	end
+	stopDrag(p)
 	p:LoadCharacter()
 end
 
@@ -2371,6 +2936,7 @@ local function onCharacter(p, char)
 		end
 	end
 	hum.BreakJointsOnDeath = false
+	hum.RequiresNeck = false
 	hum.WalkSpeed = Config.WalkSpeed
 	if classOf(p) == "warrior" then
 		hum.MaxHealth = 140
@@ -2413,6 +2979,13 @@ for _, p in ipairs(Players:GetPlayers()) do
 	task.spawn(onPlayer, p)
 end
 Players.PlayerRemoving:Connect(function(p)
+	local st = state[p]
+	if st then
+		stopDrag(p)
+		if st.draggedBy then
+			stopDrag(st.draggedBy)
+		end
+	end
 	leaveSession(p)
 	saveProfile(p)
 	state[p] = nil
@@ -2436,8 +3009,8 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 			addRes(p, k, k == "key" and 1 or 30)
 		end
 		notify(p, "[Тест] +30 всех ресурсов и Ключ")
-	elseif action == "toexit" and s and s.maze.exitOut then
-		place(p, s.maze.exitOut * CFrame.new(0, 4, -30), false)
+	elseif action == "toexit" and s and s.exit then
+		place(p, s.exit.exitOut * CFrame.new(0, 4, 8), false)
 	elseif action == "coins" then
 		addCoins(p, 500)
 	elseif action == "down" and s then
@@ -2447,7 +3020,7 @@ end)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="13">
+      <Item class="ModuleScript" referent="14">
         <Properties>
           <string name="Name">Monster</string>
           <string name="Source"><![CDATA[-- Скрежетник — ночной монстр лабиринта. Патрулирует, видит и слышит игроков,
@@ -2737,7 +3310,7 @@ return Monster
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="14">
+      <Item class="ModuleScript" referent="15">
         <Properties>
           <string name="Name">Parts</string>
           <string name="Source"><![CDATA[-- Помощники для постройки уровня из простых деталей (Part).
@@ -2896,7 +3469,7 @@ return Parts
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="15">
+      <Item class="ModuleScript" referent="16">
         <Properties>
           <string name="Name">World</string>
           <string name="Source"><![CDATA[-- Постройка мира: лобби (3 лифта сложности, торговец классами), поляна (лес, река, лифт),
@@ -2909,6 +3482,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Parts = require(script.Parent.Parts)
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Items = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Items"))
+local Deployables = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Deployables"))
 
 local World = {}
 
@@ -2940,6 +3514,15 @@ end
 
 local function inClearing(i, j)
 	return i >= CLEAR_LO and i <= CLEAR_HI and j >= CLEAR_LO and j <= CLEAR_HI
+end
+
+-- клетка внутри круга лабиринта (и не на поляне)
+local function inMaze(i, j)
+	if i < 0 or j < 0 or i >= N or j >= N or inClearing(i, j) then
+		return false
+	end
+	local di, dj = i - MID, j - MID
+	return di * di + dj * dj <= MZ.Radius * MZ.Radius
 end
 
 local function tag(inst, name)
@@ -3012,18 +3595,9 @@ World.node = node
 -- Верстак (крафтится игроком и ставится перед собой)
 ------------------------------------------------------------------
 function World.BuildWorkbench(parent, cf)
-	local wb = Instance.new("Model")
+	local wb = Deployables.build("workbench", cf)
 	wb.Name = "Workbench"
-	local top = Parts.box(wb, "Top", cf * CFrame.new(0, 3.45, 0), V(8, 0.5, 4), RGB(110, 80, 50), M.WoodPlanks)
-	for _, x in ipairs({ -3.5, 3.5 }) do
-		for _, z in ipairs({ -1.5, 1.5 }) do
-			Parts.box(wb, "Leg", cf * CFrame.new(x, 1.6, z), V(0.6, 3.2, 0.6), WOOD, M.Wood)
-		end
-	end
-	Parts.box(wb, "Shelf", cf * CFrame.new(0, 1, 0), V(7.4, 0.3, 3.4), WOOD, M.WoodPlanks)
-	Parts.box(wb, "Vise", cf * CFrame.new(3, 4.1, -1), V(1.1, 0.9, 1), METAL, M.Metal)
-	Parts.box(wb, "Saw", cf * CFrame.new(-1.7, 3.75, 0.9), V(2.5, 0.1, 0.8), RGB(170, 170, 175), M.Metal)
-	Parts.box(wb, "Hammer", cf * CFrame.new(0.8, 3.8, -1.05), V(1.6, 0.25, 0.3), WOOD, M.Wood)
+	local top = wb:FindFirstChild("Top")
 	local p = prompt(top, "Крафт", "Верстак", 0, 10)
 	local bb = Instance.new("BillboardGui")
 	bb.Size = UDim2.new(0, 200, 0, 36)
@@ -3203,24 +3777,11 @@ function World.BuildLobby()
 end
 
 ------------------------------------------------------------------
--- Рельеф: земля лабиринта, трава поляны, река
+-- Рельеф
 ------------------------------------------------------------------
--- озеро сверху слева (северо-запад), из него на восток течёт река
-local LAKE = V(-112, 0, -112)
-local LAKE_R, SAND_R = 74, 92
-local RIVER = { V(-50, 0, -96), V(40, 0, -74), V(120, 0, -40), V(196, 0, -26) }
-
-local function distToWater(p)
-	local best = (V(p.X, 0, p.Z) - LAKE).Magnitude - LAKE_R
-	for k = 1, #RIVER - 1 do
-		local a, b = RIVER[k], RIVER[k + 1]
-		local ab = b - a
-		local t = math.clamp((p - a):Dot(ab) / ab:Dot(ab), 0, 1)
-		local q = a + ab * t
-		best = math.min(best, (V(p.X, 0, p.Z) - V(q.X, 0, q.Z)).Magnitude)
-	end
-	return best
-end
+local RAD = MZ.Radius * C -- радиус круглого лабиринта в studs
+World.RADIUS = RAD
+local LAKE_R, SAND_R = 62, 76
 
 local function safe(fn)
 	local ok, err = pcall(fn)
@@ -3229,6 +3790,7 @@ local function safe(fn)
 	end
 end
 
+-- огромная земля вокруг (одинаковая для этого места, строится один раз)
 local terrainBuilt = {}
 function World.BuildTerrain(O)
 	if terrainBuilt[O.X] then
@@ -3236,57 +3798,27 @@ function World.BuildTerrain(O)
 	end
 	terrainBuilt[O.X] = true
 	local terrain = workspace.Terrain
-	local size = Config.SlotSpacing - 120
-	-- снаружи лабиринта трава (там лес), внутри коридоров — утоптанная земля
+	local size = Config.SlotSpacing - 160
 	safe(function()
-		terrain:FillBlock(CFrame.new(O + V(0, -8, 0)), V(size, 16, size), M.Grass)
+		terrain:FillBlock(CFrame.new(O + V(0, -4, 0)), V(size, 8, size), M.Grass)
 	end)
+	-- внутри круглого лабиринта — утоптанная земля
 	safe(function()
-		terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(HALF * 2 + 8, 4, HALF * 2 + 8), M.Ground)
+		terrain:FillCylinder(CFrame.new(O + V(0, -2, 0)), 4, RAD + 24, M.Ground)
 	end)
-	safe(function()
-		terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(CLEAR_HALF * 2, 4, CLEAR_HALF * 2), M.Grass)
-	end)
-	-- озеро и река. Сначала весь песок, потом выемка, потом вода —
-	-- иначе песок следующего куска реки закрывает воду предыдущего.
-	local segs = {}
-	for k = 1, #RIVER - 1 do
-		local a, b = O + RIVER[k], O + RIVER[k + 1]
-		local mid = (a + b) / 2
-		table.insert(segs, { cf = CFrame.lookAt(mid, mid + (b - a)), len = (b - a).Magnitude })
-	end
-	local function fillWater(mat, lakeR, riverW, y, h)
-		safe(function()
-			terrain:FillCylinder(CFrame.new(O + LAKE + V(0, y, 0)), h, lakeR, mat)
-		end)
-		for _, sg in ipairs(segs) do
-			safe(function()
-				terrain:FillBlock(sg.cf * CFrame.new(0, y, 0), V(riverW, h, sg.len), mat)
-			end)
-		end
-		-- круглые стыки, чтобы на поворотах не было ступенек
-		for k = 2, #RIVER do
-			safe(function()
-				terrain:FillCylinder(CFrame.new(O + RIVER[k] + V(0, y, 0)), h, riverW / 2, mat)
-			end)
-		end
-	end
-	fillWater(M.Sand, SAND_R, 30, -2, 4)
-	fillWater(M.Air, LAKE_R, 16, 1, 6)
-	fillWater(M.Water, LAKE_R, 16, -6, 10)
-	-- холмы и горы вдалеке, чтобы с вертолёта не было видно края мира
+	-- холмы и горы до самого горизонта
 	local rng = Random.new(O.X + 11)
-	for k = 1, 22 do
-		local a = k / 22 * math.pi * 2 + rng:NextNumber(-0.1, 0.1)
-		local dist = rng:NextNumber(HALF + 420, HALF + 760)
-		local r = rng:NextNumber(110, 190)
-		local c = O + V(math.cos(a) * dist, -r * 0.55, math.sin(a) * dist)
+	for k = 1, 46 do
+		local a = k / 46 * math.pi * 2 + rng:NextNumber(-0.06, 0.06)
+		local dist = rng:NextNumber(RAD + 520, size / 2 - 220)
+		local r = rng:NextNumber(120, 240)
+		local c = O + V(math.cos(a) * dist, -r * 0.5, math.sin(a) * dist)
 		safe(function()
 			terrain:FillBall(c, r, M.Grass)
 		end)
 		if k % 3 == 0 then
 			safe(function()
-				terrain:FillBall(c + V(0, r * 0.35, 0), r * 0.55, M.Rock)
+				terrain:FillBall(c + V(0, r * 0.3, 0), r * 0.6, M.Rock)
 			end)
 		end
 	end
@@ -3298,64 +3830,75 @@ function World.BuildTerrain(O)
 			clouds.Parent = terrain
 		end
 		terrain.WaterColor = RGB(40, 100, 115)
-		terrain.WaterTransparency = 0.5
+		terrain.WaterTransparency = 0.45
 		terrain.WaterWaveSize = 0.12
 		terrain.WaterReflectance = 0.7
 	end)
 end
 
--- поверхность воды из деталей: видна, даже если вода рельефа не появилась
-function World.BuildWaterSurface(parent, O)
-	local m = Instance.new("Model")
-	m.Name = "WaterSurface"
-	local water = RGB(45, 110, 125)
-	local function props()
-		return { Shape = Enum.PartType.Cylinder, CanCollide = false, CanQuery = false, Transparency = 0.45, Reflectance = 0.2, CastShadow = false }
+-- трава поляны и озеро (озеро каждый раз в своей четверти поляны)
+function World.BuildClearingTerrain(O, lake)
+	local terrain = workspace.Terrain
+	local E = CLEAR_HALF
+	safe(function()
+		terrain:FillBlock(CFrame.new(O + V(0, -6, 0)), V(E * 2, 12, E * 2), M.Grass)
+	end)
+	safe(function()
+		terrain:FillBlock(CFrame.new(O + V(0, 4, 0)), V(E * 2, 8, E * 2), M.Air)
+	end)
+	if lake then
+		safe(function()
+			terrain:FillCylinder(CFrame.new(lake + V(0, -2, 0)), 4, SAND_R, M.Sand)
+		end)
+		safe(function()
+			terrain:FillCylinder(CFrame.new(lake + V(0, 1, 0)), 6, LAKE_R, M.Air)
+		end)
+		safe(function()
+			terrain:FillCylinder(CFrame.new(lake + V(0, -6, 0)), 10, LAKE_R, M.Water)
+		end)
 	end
-	Parts.box(m, "Lake", CFrame.new(O + LAKE + V(0, -0.5, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.2, LAKE_R * 2 - 2, LAKE_R * 2 - 2), water, M.Glass, props())
-	for k = 1, #RIVER - 1 do
-		local a, b = O + RIVER[k], O + RIVER[k + 1]
-		local mid = (a + b) / 2
-		Parts.box(m, "River", CFrame.lookAt(mid, mid + (b - a)) * CFrame.new(0, -0.55, 0), V(15, 0.2, (b - a).Magnitude - 15), water, M.Glass, {
-			CanCollide = false,
-			CanQuery = false,
-			Transparency = 0.45,
-			Reflectance = 0.2,
-			CastShadow = false,
-		})
-	end
-	for k = 2, #RIVER do
-		Parts.box(m, "RiverBend", CFrame.new(O + RIVER[k] + V(0, -0.6, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.2, 15, 15), water, M.Glass, props())
-	end
-	m.Parent = parent
 end
 
--- лес вокруг всего лабиринта (виден с вертолёта)
-function World.BuildOuterForest(parent, O, seed)
+-- после игры пропасть у выхода снова засыпаем
+function World.ClearTerrain(O, pit)
+	local _ = O
+	if pit then
+		safe(function()
+			workspace.Terrain:FillBlock(pit.cf * CFrame.new(0, -2, 0), pit.size - V(0, 4, 0), M.Grass)
+		end)
+	end
+end
+
+-- лес вокруг всего лабиринта, до самых холмов
+function World.BuildOuterForest(parent, O, seed, avoid)
 	local m = Instance.new("Model")
 	m.Name = "OuterForest"
 	local rng = Random.new(seed + 5)
-	local far = HALF + 900
+	local far = RAD + 1100
 	local placed, tries = 0, 0
-	while placed < 900 and tries < 8000 do
+	while placed < 1100 and tries < 9000 do
 		tries += 1
-		-- больше деревьев ближе к стенам, реже вдали
-		local r = HALF + 24 + (rng:NextNumber() ^ 1.6) * (far - HALF - 24)
+		local r = RAD + 30 + (rng:NextNumber() ^ 1.5) * (far - RAD - 30)
 		local a = rng:NextNumber(0, math.pi * 2)
-		local x, z = math.cos(a) * r * 1.15, math.sin(a) * r * 1.15
-		if math.max(math.abs(x), math.abs(z)) > HALF + 22 and math.max(math.abs(x), math.abs(z)) < Config.SlotSpacing / 2 - 80 then
+		local p = O + V(math.cos(a) * r, 0, math.sin(a) * r)
+		local blocked = false
+		for _, z in ipairs(avoid or {}) do
+			local lp = z.cf:PointToObjectSpace(p)
+			if math.abs(lp.X) < z.size.X / 2 and math.abs(lp.Z) < z.size.Z / 2 then
+				blocked = true
+			end
+		end
+		if not blocked then
 			placed += 1
-			local p = O + V(x, 0, z)
-			local h = rng:NextNumber(30, 54)
-			local leaf = RGB(rng:NextInteger(30, 52), rng:NextInteger(74, 108), rng:NextInteger(34, 50))
+			local h = rng:NextNumber(30, 56)
 			local s1 = rng:NextNumber(16, 24)
 			Parts.box(m, "Trunk", CFrame.new(p + V(0, h / 2, 0)), V(3, h, 3), RGB(78, 56, 38), M.Wood)
 			if rng:NextNumber() < 0.4 then
-				-- ель
 				Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.62, 0)), V(s1 * 1.1, h * 0.75, s1 * 1.1), RGB(28, 66, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
 			else
+				local leaf = RGB(rng:NextInteger(30, 52), rng:NextInteger(74, 108), rng:NextInteger(34, 50))
 				Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.75, 0)), V(s1, s1 * 0.85, s1), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
-				if r < HALF + 300 then
+				if r < RAD + 300 then
 					Parts.box(m, "Crown", CFrame.new(p + V(rng:NextNumber(-3, 3), h * 0.95, rng:NextNumber(-3, 3))), V(s1 * 0.7, s1 * 0.6, s1 * 0.7), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
 				end
 			end
@@ -3363,9 +3906,6 @@ function World.BuildOuterForest(parent, O, seed)
 	end
 	m.Parent = parent
 end
-
--- рельеф у каждого места одинаковый, поэтому его не стираем, а строим один раз
-function World.ClearTerrain(_) end
 
 ------------------------------------------------------------------
 -- Записки прошлых выживших и заброшенные лагеря
@@ -3447,6 +3987,22 @@ end
 ------------------------------------------------------------------
 -- Поляна
 ------------------------------------------------------------------
+local function mine(parent, center, facing, kinds, rng, nodes)
+	local b = CFrame.lookAt(center, center + facing)
+	local beam = RGB(80, 58, 36)
+	for _, x in ipairs({ -10, 10 }) do
+		Parts.box(parent, "MineSupport", b * CFrame.new(x, 7, -11), V(1.4, 14, 1.4), beam, M.Wood)
+	end
+	Parts.box(parent, "MineBeam", b * CFrame.new(0, 14.5, -11), V(21.5, 1.4, 1.4), beam, M.Wood)
+	local lantern = Parts.box(parent, "MineLantern", b * CFrame.new(0, 13, -11), V(0.9, 1.3, 0.9), RGB(255, 170, 80), M.Neon)
+	Parts.light(lantern, 30, 1.3, RGB(255, 170, 90), true)
+	Parts.box(parent, "MineCart", b * CFrame.new(8, 1.2, 5), V(3.4, 2.2, 5), RGB(80, 70, 60), M.CorrodedMetal)
+	for k, kind in ipairs(kinds) do
+		local off = ({ V(-7, 0, 2), V(5, 0, -3), V(-3, 0, 8), V(7, 0, 9) })[k]
+		table.insert(nodes, node(parent, kind, (b * CFrame.new(off)).Position, rng))
+	end
+end
+
 function World.BuildClearing(parent, seed, O)
 	local m = Instance.new("Model")
 	m.Name = "Clearing"
@@ -3454,32 +4010,9 @@ function World.BuildClearing(parent, seed, O)
 	local refs = { model = m, nodes = {} }
 	local E = CLEAR_HALF
 
-	-- горбатый мост через реку на тропе к северным воротам (река там на z ≈ -84)
-	local bz = -84
-	local deck = { { -22, -12, 0.5, 2.2 }, { -12, -6, 2.2, 3.4 }, { -6, 6, 3.4, 3.4 }, { 6, 12, 3.4, 2.2 }, { 12, 22, 2.2, 0.5 } }
-	for _, d in ipairs(deck) do
-		local a, b = O + V(0, d[3], bz + d[1]), O + V(0, d[4], bz + d[2])
-		local mid = (a + b) / 2
-		local len = (b - a).Magnitude + 0.4
-		local cf = CFrame.lookAt(mid, b)
-		Parts.box(m, "Bridge", cf * CFrame.new(0, -0.35, 0), V(9, 0.7, len), WOOD, M.WoodPlanks)
-		for _, x in ipairs({ -4.4, 4.4 }) do
-			Parts.box(m, "BridgeRail", cf * CFrame.new(x, 2.6, 0), V(0.4, 0.4, len), RGB(70, 48, 30), M.Wood)
-			Parts.box(m, "BridgePost", cf * CFrame.new(x, 1.2, -len / 2 + 0.3), V(0.5, 3.2, 0.5), RGB(70, 48, 30), M.Wood)
-		end
-	end
-	for _, z in ipairs({ -9, 9 }) do
-		for _, x in ipairs({ -3.5, 3.5 }) do
-			Parts.box(m, "BridgePile", CFrame.new(O + V(x, -3, bz + z)), V(1, 12, 1), RGB(60, 42, 28), M.Wood)
-		end
-	end
-	-- тропинки от лифта к четырём воротам (через реку — по мосту)
-	Parts.span(m, "Path", O, V(-3.5, 0, bz + 22), V(3.5, 0.06, E - 2), RGB(120, 100, 70), M.Ground)
-	Parts.span(m, "Path", O, V(-3.5, 0, -E + 2), V(3.5, 0.06, bz - 22), RGB(120, 100, 70), M.Ground)
+	-- тропинки от лифта к четырём воротам
+	Parts.span(m, "Path", O, V(-3.5, 0, -E + 2), V(3.5, 0.06, E - 2), RGB(120, 100, 70), M.Ground)
 	Parts.span(m, "Path", O, V(-E + 2, 0, -3.5), V(E - 2, 0.06, 3.5), RGB(120, 100, 70), M.Ground)
-	-- деревянный причал на озере
-	local dock = O + LAKE + V(52, 0, 40)
-	Parts.box(m, "Dock", CFrame.lookAt(dock + V(0, 0.6, 0), O + LAKE + V(0, 0.6, 0)) * CFrame.new(0, 0, -8), V(6, 0.6, 26), WOOD, M.WoodPlanks)
 
 	-- лифт в центре поляны
 	local e = O
@@ -3502,105 +4035,151 @@ function World.BuildClearing(parent, seed, O)
 	grate.Parent = m
 	refs.grate = grate
 	refs.grateClosed = grate:GetPivot()
-	refs.liftSpawn = CFrame.lookAt(e + V(0, 3.5, 2), e + V(0, 3.5, -30))
+	refs.liftSpawn = CFrame.lookAt(e + V(0, 3.5, 0), e + V(0, 3.5, -30))
 	refs.liftPos = e
 
-	-- ящик с припасами у лифта
-	local crate = Parts.span(m, "SupplyCrate", O, V(-20, 0, -16), V(-14, 3.5, -11), RGB(120, 95, 60), M.WoodPlanks)
-	refs.supplyPrompt = prompt(crate, "Взять припасы", "Начальные ресурсы", 0, 10)
-	note(m, CFrame.new(O + V(-17, 3.6, -13.5)), rng, 9)
-
-	-- костёр с брёвнами вокруг
-	local fc = O + V(34, 0, 34)
-	local fireBase = Parts.box(m, "Campfire", CFrame.new(fc + V(0, 0.3, 0)), V(4, 0.6, 4), RGB(50, 34, 26), M.Slate)
-	local fire = Instance.new("Fire")
-	fire.Size = 6
-	fire.Heat = 9
-	fire.Parent = fireBase
-	Parts.light(fireBase, 40, 1.5, RGB(255, 150, 70), true)
-	for k = 0, 5 do
-		local a = k / 6 * math.pi * 2
-		Parts.box(m, "Log", CFrame.new(fc + V(math.cos(a) * 6, 0.8, math.sin(a) * 6)) * CFrame.Angles(0, -a, 0) * CFrame.Angles(0, 0, math.pi / 2), V(1.6, 4.5, 1.6), WOOD, M.Wood, { Shape = Enum.PartType.Cylinder })
+	-- припасы прямо в лифте: ящик, бочка, мешки
+	local crate = Parts.span(m, "SupplyCrate", O, V(-8.6, 0.6, 3.6), V(-5.6, 4, 8.4), RGB(120, 95, 60), M.WoodPlanks)
+	for _, y in ipairs({ 1.2, 3.4 }) do
+		Parts.span(m, "CrateBand", O, V(-8.7, y, 3.5), V(-5.5, y + 0.3, 8.5), RGB(60, 60, 64), M.Metal, NOCOLLIDE)
 	end
+	refs.supplyPrompt = prompt(crate, "Взять припасы", "Припасы в лифте", 0, 10)
+	note(m, CFrame.new(O + V(-7, 4.1, 6)), rng, 9)
+	Parts.box(m, "Barrel", CFrame.new(O + V(6.5, 2.4, 6.5)), V(3.6, 3.6, 3.6), RGB(90, 70, 50), M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+	Parts.box(m, "Sack", CFrame.new(O + V(6.8, 1.3, 2.5)) * CFrame.Angles(0, 0.4, 0), V(2.4, 1.4, 1.8), RGB(170, 150, 110), M.Fabric)
+	Parts.box(m, "Sack", CFrame.new(O + V(7.2, 1.3, -2.5)) * CFrame.Angles(0, -0.3, 0), V(2.4, 1.4, 1.8), RGB(160, 140, 105), M.Fabric)
 
-	local function freeSpot(minRiver)
-		for _ = 1, 60 do
-			local p = V(rng:NextNumber(-E + 10, E - 10), 0, rng:NextNumber(-E + 10, E - 10))
-			local ok = distToWater(p) > (minRiver or 14)
-				and math.abs(p.X) > 8
-				and math.abs(p.Z) > 8
-				and p.Magnitude > 30
-				and (p - V(34, 0, 34)).Magnitude > 14
+	-- поляна делится на 4 четверти, в каждой своё (порядок случайный)
+	local kinds = { "lake", "forest", "mine", "meadow" }
+	for k = #kinds, 2, -1 do
+		local j = rng:NextInteger(1, k)
+		kinds[k], kinds[j] = kinds[j], kinds[k]
+	end
+	local quads = { V(-1, 0, -1), V(1, 0, -1), V(-1, 0, 1), V(1, 0, 1) }
+	local QC = E / 2
+	local lakeC
+	refs.quadrants = {}
+	-- случайная точка внутри четверти (не на тропинках, не у лифта)
+	local function spotIn(q, margin, avoid)
+		for _ = 1, 80 do
+			local p = V(q.X * rng:NextNumber(14, E - margin), 0, q.Z * rng:NextNumber(14, E - margin))
+			local ok = true
+			if lakeC and (O + p - lakeC).Magnitude < SAND_R + 6 then
+				ok = false
+			end
+			for _, a in ipairs(avoid or {}) do
+				if (p - a.p).Magnitude < a.r then
+					ok = false
+				end
+			end
 			if ok then
 				return O + p
 			end
 		end
-		return O + V(rng:NextNumber(-E + 10, E - 10), 0, -E + 14)
+		return O + V(q.X * QC, 0, q.Z * QC)
 	end
-	-- деревья растут одной большой рощей (юго-восток поляны) и отрастают после вырубки
-	local GROVE, GR = V(118, 0, 118), 78
-	local grove = {}
-	for _ = 1, 900 do
-		if #grove >= 110 then
-			break
-		end
-		local ang, rr = rng:NextNumber(0, math.pi * 2), GR * math.sqrt(rng:NextNumber())
-		local p = GROVE + V(math.cos(ang) * rr, 0, math.sin(ang) * rr)
-		local ok = math.abs(p.X) < E - 8 and math.abs(p.Z) < E - 8 and math.abs(p.X) > 8 and math.abs(p.Z) > 8 and (p - V(34, 0, 34)).Magnitude > 16
-		for _, q in ipairs(grove) do
-			if (q - p).Magnitude < 8.5 then
-				ok = false
-				break
+	for k, kind in ipairs(kinds) do
+		local q = quads[k]
+		local qc = O + q * QC
+		refs.quadrants[kind] = qc
+		if kind == "lake" then
+			lakeC = qc + V(-q.X * 4, 0, -q.Z * 4)
+			refs.lakeCenter = lakeC
+			-- причал к центру озера
+			local dock = lakeC - q * 50
+			Parts.box(m, "Dock", CFrame.lookAt(dock + V(0, 0.6, 0), lakeC + V(0, 0.6, 0)) * CFrame.new(0, 0, -6), V(6, 0.6, 24), WOOD, M.WoodPlanks)
+			for _, x in ipairs({ -2.6, 2.6 }) do
+				for _, z in ipairs({ -2, -10, -17 }) do
+					Parts.box(m, "DockPost", CFrame.lookAt(dock, lakeC) * CFrame.new(x, -1, z), V(0.8, 4, 0.8), RGB(70, 50, 34), M.Wood)
+				end
+			end
+			-- камыш и трава по берегу (из неё — бинты)
+			for _ = 1, 14 do
+				local a = rng:NextNumber(0, math.pi * 2)
+				local p = lakeC + V(math.cos(a), 0, math.sin(a)) * rng:NextNumber(LAKE_R + 3, SAND_R + 6)
+				if math.abs(p.X - O.X) < E - 6 and math.abs(p.Z - O.Z) < E - 6 then
+					local base = Parts.box(m, "TallGrass", CFrame.new(p + V(0, 1.4, 0)), V(2.6, 2.8, 2.6), RGB(110, 140, 70), M.Grass, NOCOLLIDE)
+					base.Transparency = 0.2
+					tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
+				end
+			end
+		elseif kind == "forest" then
+			-- густая роща: деревья отрастают после вырубки
+			local placedT = {}
+			for _ = 1, 700 do
+				if #placedT >= 95 then
+					break
+				end
+				local p = spotIn(q, 8)
+				local ok = true
+				for _, t in ipairs(placedT) do
+					if (t - p).Magnitude < 8.5 then
+						ok = false
+						break
+					end
+				end
+				if ok then
+					table.insert(placedT, p)
+					table.insert(refs.nodes, node(m, "tree", p, rng))
+				end
+			end
+		elseif kind == "mine" then
+			-- скалы, вход в шахту и много камня с железом
+			for _ = 1, 14 do
+				local p = spotIn(q, 16)
+				local sz = rng:NextNumber(8, 20)
+				Parts.box(m, "Cliff", CFrame.new(p + V(0, sz * 0.3, 0)) * CFrame.Angles(rng:NextNumber(-0.3, 0.3), rng:NextNumber(0, 6), rng:NextNumber(-0.3, 0.3)), V(sz, sz * 0.8, sz * 0.9), RGB(98, 96, 92), M.Slate)
+			end
+			mine(m, qc, ((O - qc) * V(1, 0, 1)).Unit, { "stone", "stone", "iron", "iron" }, rng, refs.nodes)
+			for k2 = 1, 16 do
+				table.insert(refs.nodes, node(m, k2 % 4 == 0 and "iron" or "stone", spotIn(q, 10, { { p = qc - O, r = 18 } }), rng))
+			end
+		else
+			-- луг: костёр с брёвнами, ягоды, высокая трава, цветы
+			local fc = qc
+			local fireBase = Parts.box(m, "Campfire", CFrame.new(fc + V(0, 0.3, 0)), V(4, 0.6, 4), RGB(50, 34, 26), M.Slate)
+			local fire = Instance.new("Fire")
+			fire.Size = 6
+			fire.Heat = 9
+			fire.Parent = fireBase
+			Parts.light(fireBase, 40, 1.5, RGB(255, 150, 70), true)
+			for k2 = 0, 5 do
+				local a = k2 / 6 * math.pi * 2
+				Parts.box(m, "Log", CFrame.new(fc + V(math.cos(a) * 6, 0.8, math.sin(a) * 6)) * CFrame.Angles(0, -a, 0) * CFrame.Angles(0, 0, math.pi / 2), V(1.6, 4.5, 1.6), WOOD, M.Wood, { Shape = Enum.PartType.Cylinder })
+			end
+			local avoidFire = { { p = fc - O, r = 12 } }
+			for _ = 1, 22 do
+				local p = spotIn(q, 10, avoidFire)
+				local bush = Parts.box(m, "BerryBush", CFrame.new(p + V(0, 1.8, 0)), V(5, 3.8, 5), RGB(46, 84, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball })
+				for _ = 1, 7 do
+					Parts.box(m, "Berry", CFrame.new(p + V(rng:NextNumber(-2, 2), rng:NextNumber(1.2, 3.4), rng:NextNumber(-2, 2))), V(0.55, 0.55, 0.55), RGB(200, 30, 50), M.SmoothPlastic, {
+						Shape = Enum.PartType.Ball,
+						CanCollide = false,
+					})
+				end
+				tag(prompt(bush, "Собрать ягоды", "Куст", 0.5, 10), "BerryPrompt")
+			end
+			for _ = 1, 20 do
+				local p = spotIn(q, 8, avoidFire)
+				local base = Parts.box(m, "TallGrass", CFrame.new(p + V(0, 1.4, 0)), V(2.6, 2.8, 2.6), RGB(110, 140, 70), M.Grass, NOCOLLIDE)
+				base.Transparency = 0.2
+				for _ = 1, 5 do
+					Parts.box(m, "Blade", CFrame.new(p + V(rng:NextNumber(-1.2, 1.2), 1.8, rng:NextNumber(-1.2, 1.2))) * CFrame.Angles(rng:NextNumber(-0.2, 0.2), 0, rng:NextNumber(-0.2, 0.2)), V(0.2, 3.6, 0.2), RGB(120, 150, 70), M.Grass, NOCOLLIDE)
+				end
+				tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
+			end
+			for _ = 1, 120 do
+				local p = spotIn(q, 4)
+				local c = ({ RGB(230, 210, 80), RGB(200, 80, 120), RGB(240, 240, 240), RGB(150, 120, 230) })[rng:NextInteger(1, 4)]
+				Parts.box(m, "Flower", CFrame.new(p + V(0, 0.4, 0)), V(0.7, 0.3, 0.7), c, M.SmoothPlastic, NOCOLLIDE)
 			end
 		end
-		if ok then
-			table.insert(grove, p)
-			table.insert(refs.nodes, node(m, "tree", O + p, rng))
-		end
 	end
-	for _ = 1, 12 do
-		table.insert(refs.nodes, node(m, "tree", freeSpot(18), rng))
-	end
-	for _ = 1, 16 do
-		table.insert(refs.nodes, node(m, "stone", freeSpot(10), rng))
-	end
-	for _ = 1, 20 do
-		local p = freeSpot(10)
-		local bush = Parts.box(m, "BerryBush", CFrame.new(p + V(0, 1.8, 0)), V(5, 3.8, 5), RGB(46, 84, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball })
-		for _ = 1, 7 do
-			Parts.box(m, "Berry", CFrame.new(p + V(rng:NextNumber(-2, 2), rng:NextNumber(1.2, 3.4), rng:NextNumber(-2, 2))), V(0.55, 0.55, 0.55), RGB(200, 30, 50), M.SmoothPlastic, {
-				Shape = Enum.PartType.Ball,
-				CanCollide = false,
-			})
-		end
-		tag(prompt(bush, "Собрать ягоды", "Куст", 0.5, 10), "BerryPrompt")
-	end
-	-- высокая трава у реки (из неё делаются бинты и верёвки)
-	for _ = 1, 26 do
-		local p
-		for _ = 1, 40 do
-			local cand = V(rng:NextNumber(-E + 8, E - 8), 0, rng:NextNumber(-E + 8, E - 8))
-			local d = distToWater(cand)
-			if d > 18 and d < 30 and math.abs(cand.X) > 7 then
-				p = O + cand
-				break
-			end
-		end
-		if p then
-			local base = Parts.box(m, "TallGrass", CFrame.new(p + V(0, 1.4, 0)), V(2.6, 2.8, 2.6), RGB(110, 140, 70), M.Grass, NOCOLLIDE)
-			base.Transparency = 0.2
-			for _ = 1, 6 do
-				Parts.box(m, "Blade", CFrame.new(p + V(rng:NextNumber(-1.2, 1.2), 1.8, rng:NextNumber(-1.2, 1.2))) * CFrame.Angles(rng:NextNumber(-0.2, 0.2), 0, rng:NextNumber(-0.2, 0.2)), V(0.2, 3.6, 0.2), RGB(120, 150, 70), M.Grass, NOCOLLIDE)
-			end
-			tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
-		end
-	end
-	-- цветы
-	for _ = 1, 160 do
-		local p = V(rng:NextNumber(-E + 4, E - 4), 0, rng:NextNumber(-E + 4, E - 4))
-		if distToWater(p) > 20 then
-			local c = ({ RGB(230, 210, 80), RGB(200, 80, 120), RGB(240, 240, 240), RGB(150, 120, 230) })[rng:NextInteger(1, 4)]
-			Parts.box(m, "Flower", CFrame.new(O + p + V(0, 0.4, 0)), V(0.7, 0.3, 0.7), c, M.SmoothPlastic, NOCOLLIDE)
+	-- немного деревьев и камней у стен по всей поляне
+	for _ = 1, 10 do
+		local q = quads[rng:NextInteger(1, 4)]
+		if refs.quadrants.lake ~= O + q * QC then
+			table.insert(refs.nodes, node(m, "stone", spotIn(q, 8), rng))
 		end
 	end
 
@@ -3687,9 +4266,7 @@ local function generate(rng)
 	for i = 0, N - 1 do
 		openE[i], openS[i], visited[i] = {}, {}, {}
 	end
-	local function valid(i, j)
-		return i >= 0 and j >= 0 and i < N and j < N and not inClearing(i, j)
-	end
+	local valid = inMaze
 	local function link(a, b, c, d)
 		if a == c then
 			openS[a][math.min(b, d)] = true
@@ -3778,28 +4355,43 @@ local function chest(parent, pos, facing, golden)
 	return { model = m, lid = lid, prompt = p, base = b }
 end
 
-local function mine(parent, center, facing, kinds, rng, nodes)
-	local b = CFrame.lookAt(center, center + facing)
-	local beam = RGB(80, 58, 36)
-	for _, x in ipairs({ -10, 10 }) do
-		Parts.box(parent, "MineSupport", b * CFrame.new(x, 7, -11), V(1.4, 14, 1.4), beam, M.Wood)
+-- выход: клетка на краю круга, от которой наружу прямой свободный «коридор»
+local function exitCandidates()
+	local list = {}
+	for i = 0, N - 1 do
+		for j = 0, N - 1 do
+			if inMaze(i, j) then
+				for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+					local clear = true
+					for k = 1, 12 do
+						for l = -3, 3 do
+							local ci = i + d[1] * k + (d[1] == 0 and l or 0)
+							local cj = j + d[2] * k + (d[2] == 0 and l or 0)
+							if inMaze(ci, cj) then
+								clear = false
+							end
+						end
+					end
+					if clear and not inMaze(i + d[1], j + d[2]) then
+						table.insert(list, { i = i, j = j, di = d[1], dj = d[2] })
+					end
+				end
+			end
+		end
 	end
-	Parts.box(parent, "MineBeam", b * CFrame.new(0, 14.5, -11), V(21.5, 1.4, 1.4), beam, M.Wood)
-	local lantern = Parts.box(parent, "MineLantern", b * CFrame.new(0, 13, -11), V(0.9, 1.3, 0.9), RGB(255, 170, 80), M.Neon)
-	Parts.light(lantern, 30, 1.3, RGB(255, 170, 90), true)
-	Parts.box(parent, "MineCart", b * CFrame.new(8, 1.2, 5), V(3.4, 2.2, 5), RGB(80, 70, 60), M.CorrodedMetal)
-	for k, kind in ipairs(kinds) do
-		local off = ({ V(-7, 0, 2), V(5, 0, -3), V(-3, 0, 8), V(7, 0, 9) })[k]
-		table.insert(nodes, node(parent, kind, (b * CFrame.new(off)).Position, rng))
-	end
+	return list
 end
 
-function World.BuildMaze(parent, seed, O)
+-- Стены лабиринта и всё внутри. Каждую ночь строится заново (другие коридоры,
+-- другие сундуки и шахты), но выход остаётся на месте.
+-- fixed: { exit = {i,j,di,dj}, keyTaken, mapFound }
+function World.BuildMazeLayout(parent, seed, O, fixed)
+	fixed = fixed or {}
 	local rng = Random.new(seed)
 	local m = Instance.new("Model")
 	m.Name = "Maze"
 	local openE, openS, valid = generate(rng)
-	local refs = { model = m, nodes = {}, chests = {}, cells = {}, reeds = {} }
+	local refs = { model = m, nodes = {}, chests = {}, cells = {}, mapWalls = {} }
 	local H, T = MZ.WallHeight, MZ.WallThickness
 
 	for i = 0, N - 1 do
@@ -3810,15 +4402,15 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	-- расстояния от ворот
+	-- расстояния от ворот поляны
 	local dist = {}
 	for i = 0, N - 1 do
 		dist[i] = {}
 	end
 	local queue = {}
-	for _, s in ipairs({ { MID, CLEAR_LO - 1 }, { MID, CLEAR_HI + 1 }, { CLEAR_LO - 1, MID }, { CLEAR_HI + 1, MID } }) do
-		dist[s[1]][s[2]] = 0
-		table.insert(queue, s)
+	for _, st in ipairs({ { MID, CLEAR_LO - 1 }, { MID, CLEAR_HI + 1 }, { CLEAR_LO - 1, MID }, { CLEAR_HI + 1, MID } }) do
+		dist[st[1]][st[2]] = 0
+		table.insert(queue, st)
 	end
 	local head = 1
 	while head <= #queue do
@@ -3832,22 +4424,26 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	local exitCell, exitD = nil, -1
-	for i = 0, N - 1 do
-		for j = 0, N - 1 do
-			if (i == 0 or j == 0 or i == N - 1 or j == N - 1) and dist[i][j] and dist[i][j] > exitD then
-				exitCell, exitD = { i, j }, dist[i][j]
+	-- выход выбирается один раз — самый дальний подходящий
+	local ex = fixed.exit
+	if not ex then
+		local best = -1
+		for _, c in ipairs(exitCandidates()) do
+			local d = dist[c.i][c.j] or 0
+			if d > best then
+				ex, best = c, d
 			end
 		end
 	end
+	refs.exit = ex
 
-	-- щели: случайные внутренние стены между двумя клетками лабиринта
+	-- щели
 	local crackS, crackE = {}, {}
 	for i = 0, N - 1 do
 		crackS[i], crackE[i] = {}, {}
 	end
 	local placed, tries = 0, 0
-	while placed < MZ.Cracks and tries < 2000 do
+	while placed < MZ.Cracks and tries < 3000 do
 		tries += 1
 		local i, j = rng:NextInteger(1, N - 3), rng:NextInteger(1, N - 3)
 		if rng:NextNumber() < 0.5 then
@@ -3861,40 +4457,40 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	local function ivy(axis, fixed, a, b)
+	local function ivy(axis, fixedC, a, b)
 		if rng:NextNumber() < 0.5 then
 			local len = math.min(b - a, rng:NextNumber(8, 22))
 			local cpos = rng:NextNumber(a + len / 2, b - len / 2)
 			local hgt = rng:NextNumber(12, 40)
 			local side = rng:NextNumber() < 0.5 and -1 or 1
 			if axis == "X" then
-				Parts.span(m, "Ivy", O, V(cpos - len / 2, H - hgt, fixed + side * (T / 2) - 0.2), V(cpos + len / 2, H, fixed + side * (T / 2) + 0.2), IVY, M.LeafyGrass, NOCOLLIDE)
+				Parts.span(m, "Ivy", O, V(cpos - len / 2, H - hgt, fixedC + side * (T / 2) - 0.2), V(cpos + len / 2, H, fixedC + side * (T / 2) + 0.2), IVY, M.LeafyGrass, NOCOLLIDE)
 			else
-				Parts.span(m, "Ivy", O, V(fixed + side * (T / 2) - 0.2, H - hgt, cpos - len / 2), V(fixed + side * (T / 2) + 0.2, H, cpos + len / 2), IVY, M.LeafyGrass, NOCOLLIDE)
+				Parts.span(m, "Ivy", O, V(fixedC + side * (T / 2) - 0.2, H - hgt, cpos - len / 2), V(fixedC + side * (T / 2) + 0.2, H, cpos + len / 2), IVY, M.LeafyGrass, NOCOLLIDE)
 			end
 		end
 	end
 
-	local function wallRun(axis, fixed, from, to)
+	local function wallRun(axis, fixedC, from, to)
 		local a, b = from - T / 2, to + T / 2
 		if axis == "X" then
-			Parts.span(m, "MazeWall", O, V(a, 0, fixed - T / 2), V(b, H, fixed + T / 2), WALL, M.Slate)
+			Parts.span(m, "MazeWall", O, V(a, 0, fixedC - T / 2), V(b, H, fixedC + T / 2), WALL, M.Slate)
 		else
-			Parts.span(m, "MazeWall", O, V(fixed - T / 2, 0, a), V(fixed + T / 2, H, b), WALL, M.Slate)
+			Parts.span(m, "MazeWall", O, V(fixedC - T / 2, 0, a), V(fixedC + T / 2, H, b), WALL, M.Slate)
 		end
-		ivy(axis, fixed, a, b)
+		table.insert(refs.mapWalls, { axis, fixedC, a, b, 0 })
+		ivy(axis, fixedC, a, b)
 	end
 
-	-- стена со щелью: узкий проём 6 шириной, снизу 4 высотой; выше 4..9 — «крышка»,
-	-- сквозь которую проходит только пригнувшийся игрок (группа столкновений CrawlCover)
-	local function crackWall(axis, fixed, from, to)
+	-- стена со щелью (пролезть только пригнувшись)
+	local function crackWall(axis, fixedC, from, to)
 		local mid = (from + to) / 2
 		local function seg(a, b, y0, y1, name, group)
 			local p
 			if axis == "X" then
-				p = Parts.span(m, name, O, V(a, y0, fixed - T / 2), V(b, y1, fixed + T / 2), WALL, M.Slate)
+				p = Parts.span(m, name, O, V(a, y0, fixedC - T / 2), V(b, y1, fixedC + T / 2), WALL, M.Slate)
 			else
-				p = Parts.span(m, name, O, V(fixed - T / 2, y0, a), V(fixed + T / 2, y1, b), WALL, M.Slate)
+				p = Parts.span(m, name, O, V(fixedC - T / 2, y0, a), V(fixedC + T / 2, y1, b), WALL, M.Slate)
 			end
 			if group then
 				p.CollisionGroup = group
@@ -3905,36 +4501,42 @@ function World.BuildMaze(parent, seed, O)
 		seg(mid + 3, to + T / 2, 0, H, "MazeWall")
 		seg(mid - 3, mid + 3, 9, H, "MazeWall")
 		seg(mid - 3, mid + 3, 4, 9, "CrawlCover", "CrawlCover")
-		-- пролом: неровные камни по краю дыры с обеих сторон стены, мох и обломки на полу
+		table.insert(refs.mapWalls, { axis, fixedC, from - T / 2, to + T / 2, 1 })
 		for _, side in ipairs({ -1, 1 }) do
 			for k = 0, 6 do
 				local a = k / 6 * math.pi
 				local along = -math.cos(a) * 3.6
 				local up = math.sin(a) * 5.2
-				local face = fixed + side * (T / 2 + 0.25)
+				local face = fixedC + side * (T / 2 + 0.25)
 				local p = axis == "X" and V(mid + along, up, face) or V(face, up, mid + along)
 				Parts.box(m, "CrackStone", CFrame.new(O + p) * CFrame.Angles(0, 0, rng:NextNumber(-0.6, 0.6)), axis == "X" and V(rng:NextNumber(0.8, 1.2), rng:NextNumber(0.6, 0.9), 0.5) or V(0.5, rng:NextNumber(0.6, 0.9), rng:NextNumber(0.8, 1.2)), WALL, M.Slate, NOCOLLIDE)
 			end
-			local mp = axis == "X" and V(mid, 0.1, fixed + side * (T / 2 + 1.5)) or V(fixed + side * (T / 2 + 1.5), 0.1, mid)
+			local mp = axis == "X" and V(mid, 0.1, fixedC + side * (T / 2 + 1.5)) or V(fixedC + side * (T / 2 + 1.5), 0.1, mid)
 			Parts.box(m, "CrackMoss", CFrame.new(O + mp), axis == "X" and V(7, 0.2, 2.5) or V(2.5, 0.2, 7), IVY, M.LeafyGrass, NOCOLLIDE)
-			for _ = 1, 3 do
-				local off = rng:NextNumber(-6, 6)
-				local rp = axis == "X" and V(mid + off, 0.4, fixed + side * rng:NextNumber(3, 6)) or V(fixed + side * rng:NextNumber(3, 6), 0.4, mid + off)
-				Parts.box(m, "Rubble", CFrame.new(O + rp) * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), 0), V(1.2, 0.8, 1), WALL_DARK, M.Slate, NOCOLLIDE)
-			end
 		end
 	end
 
 	local function isExitWall(axis, line, k)
-		if not exitCell then
+		if not ex then
 			return false
 		end
-		local i, j = exitCell[1], exitCell[2]
-		if axis == "X" then
-			return k == i and ((line == -1 and j == 0) or (line == N - 1 and j == N - 1))
-		else
-			return k == j and ((line == -1 and i == 0) or (line == N - 1 and i == N - 1))
+		if axis == "X" and ex.dj ~= 0 then
+			return k == ex.i and line == (ex.dj > 0 and ex.j or ex.j - 1)
+		elseif axis == "Z" and ex.di ~= 0 then
+			return k == ex.j and line == (ex.di > 0 and ex.i or ex.i - 1)
 		end
+		return false
+	end
+
+	-- стена между клетками A и B есть, если хотя бы одна из них в лабиринте
+	local function edge(aIn, bIn, aClr, bClr, open, exitWall)
+		if aClr or bClr or exitWall then
+			return false, false
+		end
+		if aIn and bIn then
+			return not open, false
+		end
+		return aIn or bIn, false
 	end
 
 	for line = -1, N - 1 do
@@ -3943,14 +4545,10 @@ function World.BuildMaze(parent, seed, O)
 		for i = 0, N do
 			local present, crack = false, false
 			if i < N then
-				if line == -1 or line == N - 1 then
-					present = not isExitWall("X", line, i)
-				else
-					local cA, cB = inClearing(i, line), inClearing(i, line + 1)
-					present = not cA and not cB and not openS[i][line]
-					crack = present and crackS[i][line] == true
-					present = present and not crack
-				end
+				local aIn, bIn = valid(i, line), valid(i, line + 1)
+				present = edge(aIn, bIn, inClearing(i, line), inClearing(i, line + 1), openS[i] and openS[i][line], isExitWall("X", line, i))
+				crack = present and aIn and bIn and crackS[i] and crackS[i][line] == true
+				present = present and not crack
 			end
 			if present and not runStart then
 				runStart = i
@@ -3969,14 +4567,10 @@ function World.BuildMaze(parent, seed, O)
 		for j = 0, N do
 			local present, crack = false, false
 			if j < N then
-				if line == -1 or line == N - 1 then
-					present = not isExitWall("Z", line, j)
-				else
-					local cA, cB = inClearing(line, j), inClearing(line + 1, j)
-					present = not cA and not cB and not openE[line][j]
-					crack = present and crackE[line][j] == true
-					present = present and not crack
-				end
+				local aIn, bIn = valid(line, j), valid(line + 1, j)
+				present = edge(aIn, bIn, inClearing(line, j), inClearing(line + 1, j), openE[line] and openE[line][j], isExitWall("Z", line, j))
+				crack = present and aIn and bIn and crackE[line] and crackE[line][j] == true
+				present = present and not crack
 			end
 			if present and not runStart then
 				runStart = j
@@ -3994,7 +4588,7 @@ function World.BuildMaze(parent, seed, O)
 	local deadEnds = {}
 	for i = 0, N - 1 do
 		for j = 0, N - 1 do
-			if valid(i, j) and dist[i][j] and dist[i][j] > 2 and not (exitCell and exitCell[1] == i and exitCell[2] == j) then
+			if valid(i, j) and dist[i][j] and dist[i][j] > 2 and not (ex and ex.i == i and ex.j == j) then
 				local nb = neighbors(i, j, openE, openS, valid)
 				if #nb == 1 then
 					table.insert(deadEnds, { i = i, j = j, d = dist[i][j], to = cellPos(O, nb[1][1], nb[1][2]) })
@@ -4005,10 +4599,27 @@ function World.BuildMaze(parent, seed, O)
 	table.sort(deadEnds, function(a, b)
 		return a.d > b.d
 	end)
-	if deadEnds[1] then
+	-- золотой сундук с ключ-картой (пока ключ не найден)
+	if deadEnds[1] and not fixed.keyTaken then
 		local de = table.remove(deadEnds, 1)
 		local pos = cellPos(O, de.i, de.j)
 		table.insert(refs.chests, chest(m, pos, (de.to - pos).Unit, true))
+	end
+	-- карта лабиринта лежит на столе в тупике средней глубины
+	if not fixed.mapFound and #deadEnds > 4 then
+		local de = table.remove(deadEnds, math.floor(#deadEnds / 2))
+		local pos = cellPos(O, de.i, de.j)
+		local b = CFrame.lookAt(pos, pos + (de.to - pos).Unit)
+		Parts.box(m, "MapTable", b * CFrame.new(0, 1.6, 0), V(5, 0.4, 3), RGB(100, 72, 46), M.WoodPlanks)
+		for _, x in ipairs({ -2.1, 2.1 }) do
+			for _, z in ipairs({ -1.1, 1.1 }) do
+				Parts.box(m, "TableLeg", b * CFrame.new(x, 0.7, z), V(0.4, 1.4, 0.4), RGB(80, 58, 38), M.Wood)
+			end
+		end
+		local sheet = Parts.box(m, "MazeMap", b * CFrame.new(0, 1.85, 0) * CFrame.Angles(0, 0.2, 0), V(2.6, 0.06, 1.8), RGB(225, 210, 170), M.SmoothPlastic, NOCOLLIDE)
+		sheet.CanQuery = true
+		Parts.light(sheet, 12, 0.8, RGB(255, 230, 170), false)
+		tag(prompt(sheet, "Взять карту", "Карта лабиринта", 0.6, 9), "MapPrompt")
 	end
 	local far, near = {}, {}
 	for k, de in ipairs(deadEnds) do
@@ -4044,7 +4655,7 @@ function World.BuildMaze(parent, seed, O)
 		table.insert(refs.chests, c)
 	end
 
-	-- атмосфера: светящийся мох, кости, обломки, высокая трава в коридорах
+	-- атмосфера: светящийся мох, кости, обломки, высокая трава
 	for _ = 1, 90 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)]
 		local glow = Parts.box(m, "GlowMoss", CFrame.new(p + V(rng:NextNumber(-12, 12), 0.2, rng:NextNumber(-12, 12))), V(rng:NextNumber(1, 3), 0.3, rng:NextNumber(1, 3)), RGB(90, 255, 170), M.Neon, NOCOLLIDE)
@@ -4066,24 +4677,21 @@ function World.BuildMaze(parent, seed, O)
 		base.Transparency = 0.2
 		tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
 	end
-
-	-- лагеря прошлых выживших, ящики и записки
-	for k = 1, 8 do
+	for k = 1, 9 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)]
 		if (p - O).Magnitude > CLEAR_HALF + 60 then
 			camp(m, p, rng, k)
 		end
 	end
-	for _ = 1, 26 do
+	for _ = 1, 30 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-9, 9), 0, rng:NextNumber(-9, 9))
 		lootCrate(m, p, rng)
 	end
-	for k = 9, 16 do
+	for k = 10, 16 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-8, 8), 0.1, rng:NextNumber(-8, 8))
 		note(m, CFrame.new(p) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), rng, k)
 	end
-	-- заросли лиан: можно залезть внутрь и спрятаться от Скрежетников
-	for _ = 1, 26 do
+	for _ = 1, 28 do
 		local c = refs.cells[rng:NextInteger(1, #refs.cells)]
 		if (c - O).Magnitude > CLEAR_HALF + 40 then
 			local dir = ({ V(1, 0, 0), V(-1, 0, 0), V(0, 0, 1), V(0, 0, -1) })[rng:NextInteger(1, 4)]
@@ -4091,79 +4699,156 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	-- выход и вертолётная площадка за ним
-	if exitCell then
-		local i, j = exitCell[1], exitCell[2]
-		local inner = cellPos(O, i, j)
-		local out
-		if i == 0 then
-			out = V(-1, 0, 0)
-		elseif i == N - 1 then
-			out = V(1, 0, 0)
-		elseif j == 0 then
-			out = V(0, 0, -1)
-		else
-			out = V(0, 0, 1)
-		end
-		local mouth = inner + out * (C / 2)
-		local b = CFrame.lookAt(mouth, mouth + out)
-		for _, x in ipairs({ -C / 2, C / 2 }) do
-			Parts.box(m, "ExitWall", b * CFrame.new(x, H / 2, -25), V(T, H, 50), WALL_DARK, M.Slate)
-		end
-		Parts.box(m, "ExitFloor", b * CFrame.new(0, 0.2, -25), V(C, 0.4, 50), RGB(60, 60, 64), M.Concrete)
-		local door = Parts.box(m, "ExitDoor", b * CFrame.new(0, H / 2 - 4, -50), V(C, H - 8, 2), RGB(90, 95, 100), M.DiamondPlate)
-		for _, x in ipairs({ -10, 10 }) do
-			local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(x, H - 10, -48), V(1.8, 1.8, 1.8), RGB(120, 255, 160), M.Neon)
-			Parts.light(lamp, 40, 1.8, RGB(140, 255, 170), true)
-		end
-		local sign = Parts.box(m, "ExitSign", b * CFrame.new(0, H - 4, -48.8), V(18, 4, 0.3), RGB(20, 40, 25), M.SmoothPlastic)
-		local sg = Instance.new("SurfaceGui")
-		sg.Face = Enum.NormalId.Back
-		sg.PixelsPerStud = 25
-		sg.Parent = sign
-		local tl = Instance.new("TextLabel")
-		tl.Size = UDim2.fromScale(1, 1)
-		tl.BackgroundTransparency = 1
-		tl.Text = "ВЫХОД"
-		tl.Font = Enum.Font.GothamBlack
-		tl.TextScaled = true
-		tl.TextColor3 = RGB(140, 255, 170)
-		tl.Parent = sg
-		-- считыватель ключ-карты на стене у ворот (на уровне груди)
-		local reader = Parts.box(m, "CardReader", b * CFrame.new(C / 2 - T / 2 - 0.4, 4.8, -46) * CFrame.Angles(0, -math.pi / 2, 0), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
-		local readerLight = Parts.box(m, "ReaderLight", reader.CFrame * CFrame.new(0, 0.8, -0.3), V(0.5, 0.3, 0.1), RGB(255, 40, 40), M.Neon, NOCOLLIDE)
-		Parts.box(m, "ReaderSlot", reader.CFrame * CFrame.new(0, -0.2, -0.3), V(1, 0.12, 0.1), RGB(10, 10, 10), M.SmoothPlastic, NOCOLLIDE)
-		refs.readerLight = readerLight
+	m.Parent = parent
+	return refs
+end
 
-		-- снаружи: лесная поляна, где ждёт вертолёт
-		local pad = b * CFrame.new(0, 0, -95)
-		local frng = Random.new(seed + 99)
-		for _ = 1, 70 do
-			local a = frng:NextNumber(0, math.pi * 2)
-			local r = frng:NextNumber(34, 120)
-			local local2 = V(math.cos(a) * r, 0, math.sin(a) * r)
-			-- не ставим деревья на дорогу от ворот к поляне
-			local rel = pad * CFrame.new(local2)
-			local toMouth = (b:PointToObjectSpace(rel.Position))
-			if not (math.abs(toMouth.X) < 14 and toMouth.Z > -100 and toMouth.Z < 0) then
-				local h = frng:NextNumber(26, 40)
-				local tp = rel.Position
-				Parts.box(m, "ForestTrunk", CFrame.new(tp + V(0, h / 2, 0)), V(2.4, h, 2.4), RGB(80, 58, 40), M.Wood)
-				for k = 1, 4 do
-					local sz = frng:NextNumber(10, 15) * (1 - k * 0.12)
-					Parts.box(m, "ForestLeaves", CFrame.new(tp + V(frng:NextNumber(-2, 2), h * 0.6 + k * 3, frng:NextNumber(-2, 2))), V(sz, sz * 0.8, sz), RGB(40, frng:NextInteger(85, 110), 45), M.LeafyGrass, {
-						Shape = Enum.PartType.Ball,
-						CanCollide = false,
-					})
-				end
-			end
+------------------------------------------------------------------
+-- Выход: туннель → пропасть с мостом → лаборатория → вертолётная площадка.
+-- Строится один раз за игру (лабиринт меняется, а выход — нет).
+------------------------------------------------------------------
+function World.BuildExit(parent, O, ex)
+	local m = Instance.new("Model")
+	m.Name = "Exit"
+	local H, T = MZ.WallHeight, MZ.WallThickness
+	local inner = cellPos(O, ex.i, ex.j)
+	local out = V(ex.di, 0, ex.dj)
+	local mouth = inner + out * (C / 2)
+	local b = CFrame.lookAt(mouth, mouth + out) -- -Z смотрит наружу
+	local refs = { model = m, exitOut = b }
+	local CONC = RGB(120, 120, 118)
+	local W = C / 2
+
+	-- 1. туннель: одинаковые стены слева и справа, арки, фонари
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "TunnelWall", b * CFrame.new(sx * (W + T / 2), H / 2, -55), V(T, H, 110), WALL_DARK, M.Slate)
+		for d = 10, 100, 18 do
+			local lamp = Parts.box(m, "TunnelLamp", b * CFrame.new(sx * (W - 0.6), 12, -d), V(0.8, 1.6, 1.2), RGB(255, 200, 120), M.Neon)
+			Parts.light(lamp, 26, 1.2, RGB(255, 190, 120), d > 60)
+			Parts.box(m, "Ivy", b * CFrame.new(sx * (W - 0.3), H - 10, -d - 6), V(0.4, 20, 7), IVY, M.LeafyGrass, NOCOLLIDE)
 		end
-		refs.exitDoor = door
-		refs.exitPrompt = prompt(reader, "Вставить ключ-карту", "Считыватель", 1.2, 9)
-		refs.exitOut = b
-		refs.helipad = pad
 	end
+	for d = 6, 66, 12 do
+		Parts.box(m, "Arch", b * CFrame.new(0, H - 2, -d), V(C + T * 2, 4, 3), WALL_DARK, M.Slate)
+	end
+	Parts.box(m, "TunnelFloor", b * CFrame.new(0, 0.15, -35), V(C, 0.3, 70), RGB(70, 68, 64), M.Concrete)
+	local trigger = Parts.box(m, "ExitTrigger", b * CFrame.new(0, 6, -14), V(C, 12, 6), RGB(0, 0, 0), M.SmoothPlastic, { Transparency = 1, CanCollide = false, CanQuery = false })
+	refs.trigger = trigger
 
+	-- 2. пропасть: дыра вниз во всю ширину туннеля, через неё узкий мост
+	refs.pit = { cf = b * CFrame.new(0, -10, -88), size = V(C + 8, 28, 36) }
+	safe(function()
+		workspace.Terrain:FillBlock(refs.pit.cf, refs.pit.size, M.Air)
+	end)
+	for _, d in ipairs({ -70, -106 }) do
+		Parts.box(m, "PitFace", b * CFrame.new(0, -45, d + (d == -70 and -0.5 or 0.5)), V(C + 8, 90, 1), RGB(40, 38, 36), M.Slate)
+	end
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "PitSide", b * CFrame.new(sx * (W + 0.5), -45, -88), V(1, 90, 36), RGB(40, 38, 36), M.Slate)
+	end
+	Parts.box(m, "PitBottom", b * CFrame.new(0, -92, -88), V(C + 8, 2, 36), RGB(10, 8, 8), M.Slate)
+	for _, d in ipairs({ -80, -96 }) do
+		local glow = Parts.box(m, "PitGlow", b * CFrame.new(0, -88, d), V(2, 1, 2), RGB(120, 20, 20), M.Neon, NOCOLLIDE)
+		Parts.light(glow, 50, 2, RGB(255, 40, 30), true)
+	end
+	-- мост
+	Parts.box(m, "Bridge", b * CFrame.new(0, 0.3, -88), V(6, 0.6, 40), RGB(92, 66, 42), M.WoodPlanks)
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "BridgeRope", b * CFrame.new(sx * 3, 3.2, -88), V(0.25, 0.25, 40), RGB(150, 120, 80), M.Fabric, NOCOLLIDE)
+		for d = 68, 108, 8 do
+			Parts.box(m, "BridgePost", b * CFrame.new(sx * 3, 1.7, -d), V(0.4, 3.4, 0.4), RGB(70, 50, 32), M.Wood)
+		end
+	end
+	Parts.box(m, "LandingFloor", b * CFrame.new(0, 0.15, -109), V(C, 0.3, 6), RGB(70, 68, 64), M.Concrete)
+
+	-- 3. фасад лаборатории с дверью и считывателем ключ-карты
+	local face = -112
+	local FW, FH = 80, 40
+	local doorW, doorH = 14, 16
+	Parts.box(m, "LabFacade", b * CFrame.new(-(doorW / 2 + (FW - doorW) / 4), FH / 2, face), V((FW - doorW) / 2, FH, 3), CONC, M.Concrete)
+	Parts.box(m, "LabFacade", b * CFrame.new(doorW / 2 + (FW - doorW) / 4, FH / 2, face), V((FW - doorW) / 2, FH, 3), CONC, M.Concrete)
+	Parts.box(m, "LabFacade", b * CFrame.new(0, doorH + (FH - doorH) / 2, face), V(doorW, FH - doorH, 3), CONC, M.Concrete)
+	local door = Parts.box(m, "ExitDoor", b * CFrame.new(0, doorH / 2, face + 0.3), V(doorW, doorH, 1.6), RGB(90, 95, 100), M.DiamondPlate)
+	for _, x in ipairs({ -doorW / 2 - 1, doorW / 2 + 1 }) do
+		Parts.box(m, "HazardStripe", b * CFrame.new(x, doorH / 2, face + 1.6), V(1.2, doorH, 0.2), RGB(230, 180, 40), M.SmoothPlastic, NOCOLLIDE)
+	end
+	for _, x in ipairs({ -12, 12 }) do
+		local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(x, doorH + 3, face + 2), V(1.8, 1.8, 1.8), RGB(120, 255, 160), M.Neon)
+		Parts.light(lamp, 40, 1.8, RGB(140, 255, 170), true)
+	end
+	local sign = Parts.box(m, "ExitSign", b * CFrame.new(0, doorH + 7, face + 1.7), V(24, 5, 0.3), RGB(20, 40, 25), M.SmoothPlastic)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Back
+	sg.PixelsPerStud = 25
+	sg.Parent = sign
+	local tl = Instance.new("TextLabel")
+	tl.Size = UDim2.fromScale(1, 1)
+	tl.BackgroundTransparency = 1
+	tl.Text = "СЕКТОР 7 · ВЫХОД"
+	tl.Font = Enum.Font.GothamBlack
+	tl.TextScaled = true
+	tl.TextColor3 = RGB(140, 255, 170)
+	tl.Parent = sg
+	local reader = Parts.box(m, "CardReader", b * CFrame.new(doorW / 2 + 3, 4.6, face + 1.8), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
+	refs.readerLight = Parts.box(m, "ReaderLight", reader.CFrame * CFrame.new(0, 0.8, 0.3), V(0.5, 0.3, 0.1), RGB(255, 40, 40), M.Neon, NOCOLLIDE)
+	Parts.box(m, "ReaderSlot", reader.CFrame * CFrame.new(0, -0.2, 0.3), V(1, 0.12, 0.1), RGB(10, 10, 10), M.SmoothPlastic, NOCOLLIDE)
+	refs.reader = reader
+	refs.exitDoor = door
+	refs.exitPrompt = prompt(reader, "Приложить ключ-карту", "Считыватель", 0.3, 9)
+	refs.doorFront = b * CFrame.new(doorW / 2 - 1, 3, face + 7)
+
+	-- 4. лаборатория внутри: пусто, мигает свет, брошенные столы и мониторы
+	local L0, L1 = face - 1.5, face - 61.5
+	local LW, LH = 40, 14
+	local len = L0 - L1
+	local mid = (L0 + L1) / 2
+	Parts.box(m, "LabFloor", b * CFrame.new(0, 0.2, mid), V(LW, 0.4, len), RGB(200, 202, 205), M.Concrete)
+	Parts.box(m, "LabCeiling", b * CFrame.new(0, LH, mid), V(LW, 0.6, len), RGB(160, 162, 165), M.Concrete)
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "LabWall", b * CFrame.new(sx * (LW / 2 + 0.5), LH / 2, mid), V(1, LH, len), RGB(215, 218, 220), M.SmoothPlastic)
+	end
+	-- задняя стена с дверью наружу
+	local backW = 12
+	Parts.box(m, "LabWall", b * CFrame.new(-(backW / 2 + (LW - backW) / 4), LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(215, 218, 220), M.SmoothPlastic)
+	Parts.box(m, "LabWall", b * CFrame.new(backW / 2 + (LW - backW) / 4, LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(215, 218, 220), M.SmoothPlastic)
+	Parts.box(m, "LabWall", b * CFrame.new(0, 11 + (LH - 11) / 2, L1), V(backW, LH - 11, 1), RGB(215, 218, 220), M.SmoothPlastic)
+	refs.labBackDoor = Parts.box(m, "LabBackDoor", b * CFrame.new(0, 5.5, L1), V(backW, 11, 0.8), RGB(90, 95, 100), M.DiamondPlate)
+	for d = L0 - 6, L1 + 6, -10 do
+		local lamp = Parts.box(m, "LabLamp", b * CFrame.new(0, LH - 0.5, d), V(8, 0.3, 1.2), RGB(230, 245, 255), M.Neon)
+		Parts.light(lamp, 24, 1, RGB(220, 235, 255), (d // 10) % 2 == 0)
+	end
+	local rng = Random.new(ex.i * 31 + ex.j)
+	for k = 0, 4 do
+		for _, sx in ipairs({ -1, 1 }) do
+			local d = L0 - 8 - k * 11
+			local dcf = b * CFrame.new(sx * 14, 0, d) * CFrame.Angles(0, sx * math.pi / 2, 0)
+			Parts.box(m, "Desk", dcf * CFrame.new(0, 2.6, 0), V(8, 0.3, 3.4), RGB(70, 72, 78), M.Metal)
+			Parts.box(m, "DeskLeg", dcf * CFrame.new(0, 1.25, 0), V(7.6, 2.5, 0.3), RGB(60, 62, 66), M.Metal)
+			local screen = Parts.box(m, "Monitor", dcf * CFrame.new(-1.5, 4, 1), V(2.6, 1.7, 0.2), rng:NextNumber() < 0.5 and RGB(60, 200, 120) or RGB(70, 140, 230), M.Neon, NOCOLLIDE)
+			screen.CFrame = screen.CFrame * CFrame.Angles(0, math.pi, 0)
+			Parts.box(m, "Paper", dcf * CFrame.new(rng:NextNumber(-2, 2), 2.8, rng:NextNumber(-1, 1)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(1, 0.05, 1.3), RGB(240, 240, 235), M.SmoothPlastic, NOCOLLIDE)
+			Parts.box(m, "Chair", dcf * CFrame.new(0, 1.2, -2.6) * CFrame.Angles(0, rng:NextNumber(-0.6, 0.6), rng:NextNumber() < 0.2 and 1.4 or 0), V(1.8, 2.4, 1.8), RGB(40, 40, 46), M.Fabric)
+		end
+	end
+	-- разбитая колба в центре
+	Parts.box(m, "TankBase", b * CFrame.new(0, 0.8, mid), V(7, 1.2, 7), RGB(60, 62, 66), M.Metal, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+	Parts.box(m, "TankGlass", b * CFrame.new(0, 5, mid), V(7, 6, 6), RGB(150, 220, 200), M.Glass, { Transparency = 0.6, CanCollide = false })
+	for _ = 1, 10 do
+		Parts.box(m, "Shard", b * CFrame.new(rng:NextNumber(-8, 8), 0.45, mid + rng:NextNumber(-8, 8)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(0.8, 0.05, 0.5), RGB(170, 230, 210), M.Glass, NOCOLLIDE)
+	end
+	refs.labStart = b * CFrame.new(0, 5, face - 3)
+	refs.labEnd = b * CFrame.new(0, 5, L1 + 4)
+
+	-- 5. снаружи: вертолётная площадка в лесу
+	local pad = b * CFrame.new(0, 0, L1 - 70)
+	Parts.box(m, "Helipad", pad * CFrame.new(0, 0.2, 0) * CFrame.Angles(0, 0, math.pi / 2), V(0.4, 56, 56), RGB(80, 80, 82), M.Concrete, { Shape = Enum.PartType.Cylinder })
+	Parts.box(m, "PadH", pad * CFrame.new(-6, 0.45, 0), V(2, 0.1, 16), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "PadH", pad * CFrame.new(6, 0.45, 0), V(2, 0.1, 16), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "PadH", pad * CFrame.new(0, 0.45, 0), V(10, 0.1, 2), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "Path", b * CFrame.new(0, 0.1, L1 - 35), V(8, 0.2, 70), RGB(120, 100, 70), M.Ground, NOCOLLIDE)
+	refs.helipad = pad
+	-- зона выхода: здесь нет Скрежетников, и лес не растёт
+	refs.zone = { cf = b * CFrame.new(0, 0, -150), size = V(100, 300, 320) }
 	m.Parent = parent
 	return refs
 end
@@ -4174,23 +4859,26 @@ return World
       </Item>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="16">
+  <Item class="StarterPlayer" referent="17">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="17">
+    <Item class="StarterPlayerScripts" referent="18">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="18">
+      <Item class="Folder" referent="19">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">BuildMode</string>
-            <string name="Source"><![CDATA[-- Режим строительства (в руке чертёж): прозрачный предпросмотр детали по сетке,
--- R — сменить деталь, ЛКМ — поставить. С молотком — подсказка, во что улучшится.
+            <string name="Source"><![CDATA[-- Строительство на клиенте:
+--  * чертёж: прозрачный предпросмотр детали по сетке, R — круговое меню выбора детали, ЛКМ — поставить;
+--  * молоток: R — круговое меню улучшения (дерево / камень / металл / снести), ЛКМ — следующий уровень;
+--  * верстак, кровать, сундук: предпросмотр самой модели, зелёный — можно, красный — нельзя,
+--    R — повернуть, ЛКМ — поставить.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -4199,6 +4887,7 @@ local CollectionService = game:GetService("CollectionService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Building = require(Shared:WaitForChild("Building"))
 local Items = require(Shared:WaitForChild("Items"))
+local Deployables = require(Shared:WaitForChild("Deployables"))
 
 local player = Players.LocalPlayer
 local V = Vector3.new
@@ -4207,9 +4896,13 @@ local RGB = Color3.fromRGB
 local BuildMode = {}
 
 local index = 1
-local ghost
-local current -- {id, a}
+local ghost, ghostKey
+local current -- {id, a} для чертежа, {tool, cf} для предмета
 local hint
+local rot = 0
+local aimedPiece
+
+local GOOD, BAD = RGB(90, 220, 120), RGB(255, 80, 70)
 
 local function costText(cost)
 	local parts = {}
@@ -4220,30 +4913,79 @@ local function costText(cost)
 	return table.concat(parts, ", ")
 end
 
-local function makeGhost(id)
+local function enough(cost)
+	for k, n in pairs(cost) do
+		if (player:GetAttribute("Res_" .. k) or 0) < n then
+			return false
+		end
+	end
+	return true
+end
+
+local function clearGhost()
 	if ghost then
 		ghost:Destroy()
+		ghost, ghostKey = nil, nil
 	end
+end
+
+local function styleGhost(m)
+	for _, d in ipairs(m:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.CastShadow = false
+			d.Material = Enum.Material.ForceField
+			d.Transparency = 0.15
+		end
+	end
+	m.Parent = workspace.CurrentCamera
+end
+
+local function pieceGhost(id)
+	if ghostKey == "piece:" .. id then
+		return
+	end
+	clearGhost()
 	local def = Building.ById[id]
+	local m = Instance.new("Model")
 	local p = Instance.new(id == "stairs" and "WedgePart" or "Part")
-	p.Name = "BuildGhost"
 	p.Size = def.Size
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanQuery = false
-	p.CanTouch = false
-	p.CastShadow = false
-	p.Material = Enum.Material.ForceField
-	p.Transparency = 0.2
-	p.Parent = workspace.CurrentCamera
-	ghost = p
+	p.Parent = m
+	m.PrimaryPart = p
+	styleGhost(m)
+	ghost, ghostKey = m, "piece:" .. id
+end
+
+local function deployGhost(dep)
+	if ghostKey == "deploy:" .. dep then
+		return
+	end
+	clearGhost()
+	local m = Deployables.build(dep, CFrame.new())
+	styleGhost(m)
+	ghost, ghostKey = m, "deploy:" .. dep
+end
+
+local function setGhostColor(c, visible)
+	if not ghost then
+		return
+	end
+	for _, d in ipairs(ghost:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Color = c
+			d.Transparency = visible and 0.15 or 1
+		end
+	end
 end
 
 function BuildMode.init(gui, make)
 	hint = make("TextLabel", {
 		AnchorPoint = Vector2.new(0.5, 1),
 		Position = UDim2.new(0.5, 0, 1, -96),
-		Size = UDim2.new(0, 560, 0, 46),
+		Size = UDim2.new(0, 600, 0, 46),
 		BackgroundColor3 = RGB(15, 18, 24),
 		BackgroundTransparency = 0.35,
 		Font = Enum.Font.GothamBold,
@@ -4258,92 +5000,154 @@ function BuildMode.init(gui, make)
 	c.Parent = hint
 end
 
-function BuildMode.cycle()
-	index = index % #Building.Pieces + 1
-	makeGhost(Building.Pieces[index].Id)
-end
-
 local function pieces()
 	return CollectionService:GetTagged("BuildPiece")
 end
 
--- вызывать каждый кадр. mode: "blueprint", "hammer" или nil
-function BuildMode.update(mode, rayParams)
+-- круговое меню: какую деталь строить
+function BuildMode.pieceMenu(Radial)
+	local opts = {}
+	for _, p in ipairs(Building.Pieces) do
+		table.insert(opts, { label = p.Name, sub = costText(p.Cost), color = enough(p.Cost) and RGB(48, 70, 52) or RGB(70, 40, 40) })
+	end
+	Radial.open(opts, function(k)
+		index = k
+	end)
+end
+
+-- круговое меню молотка: до какого уровня улучшить
+function BuildMode.hammerMenu(Radial, remote)
+	local piece = aimedPiece
+	if not piece then
+		return false
+	end
+	local cur = piece:GetAttribute("Tier") or 0
+	local opts = {}
+	for t = 1, 3 do
+		local d = Building.Tiers[t]
+		local ok = t > cur and enough(d.Cost)
+		table.insert(opts, {
+			label = d.Name,
+			sub = t <= cur and "уже есть" or costText(d.Cost),
+			color = ok and RGB(48, 70, 52) or RGB(60, 50, 50),
+			tier = t,
+		})
+	end
+	table.insert(opts, { label = "Снести", sub = "вернётся половина досок", color = RGB(90, 40, 30), tier = "remove" })
+	Radial.open(opts, function(_, o)
+		remote:FireServer(piece, o.tier)
+	end)
+	return true
+end
+
+function BuildMode.rotate()
+	rot = (rot + 1) % 4
+end
+
+-- вызывать каждый кадр. mode: "blueprint" / "hammer" / "deploy" / nil
+function BuildMode.update(mode, rayParams, toolId)
 	current = nil
-	if mode ~= "blueprint" then
-		if ghost then
-			ghost:Destroy()
-			ghost = nil
-		end
+	aimedPiece = nil
+	if mode ~= "blueprint" and mode ~= "deploy" then
+		clearGhost()
 	end
 	if not hint then
 		return
 	end
-	hint.Visible = mode ~= nil
 	local cam = workspace.CurrentCamera
 	local O = player:GetAttribute("SessionO")
 	if not mode or not O then
 		hint.Visible = false
+		clearGhost()
 		return
 	end
+	hint.Visible = true
 	local r = workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * 22, rayParams)
+
 	if mode == "hammer" then
 		local piece = r and Building.pieceOf(r.Instance)
+		aimedPiece = piece
 		if piece then
 			local tier = piece:GetAttribute("Tier") or 0
 			local nextT = Building.Tiers[tier + 1]
-			hint.Text = piece.Name .. " · " .. Building.Tiers[tier].Name .. (nextT and ("   →   ЛКМ: " .. nextT.Name .. " (" .. costText(nextT.Cost) .. ")") or "   (максимум)")
+			hint.Text = piece.Name .. " · " .. Building.Tiers[tier].Name .. (nextT and ("  ·  ЛКМ: → " .. nextT.Name .. " (" .. costText(nextT.Cost) .. ")") or "  (максимум)") .. "\nR — круговое меню: выбрать уровень или снести"
 		else
-			hint.Text = "Молоток: наведи на постройку и бей ЛКМ — улучшить (чертёж → дерево → камень → металл)"
+			hint.Text = "Молоток: наведи на постройку. ЛКМ — следующий уровень, R — меню улучшения"
 		end
 		return
 	end
-	local def = Building.Pieces[index]
-	if not ghost or ghost.Size ~= def.Size or (def.Id == "stairs") ~= ghost:IsA("WedgePart") then
-		makeGhost(def.Id)
-	end
-	local a = r and Building.snap(def.Id, O, r.Position, r.Instance, cam.CFrame.LookVector, pieces())
-	hint.Text = "R — сменить: " .. def.Name .. "  ·  " .. costText(def.Cost) .. "\nЛКМ — поставить" .. (def.Id == "foundation" and "" or "  ·  ставится на фундамент / стену")
-	if not a then
-		ghost.Transparency = 1
+
+	if mode == "deploy" then
+		local def = Items.Tools[toolId]
+		local dep = def and def.Deploy
+		if not dep then
+			return
+		end
+		deployGhost(dep)
+		hint.Text = "Поставить: " .. Deployables.Names[dep] .. "  ·  R — повернуть  ·  ЛКМ — поставить"
+		if not r or r.Normal.Y < 0.7 then
+			setGhostColor(BAD, false)
+			return
+		end
+		local look = cam.CFrame.LookVector * V(1, 0, 1)
+		local yaw = math.atan2(look.X, look.Z) + rot * math.pi / 2
+		local cf = CFrame.new(r.Position) * CFrame.Angles(0, yaw, 0)
+		ghost:PivotTo(cf)
+		-- влезает ли
+		local size = Deployables.Size[dep]
+		local op = OverlapParams.new()
+		op.FilterType = Enum.RaycastFilterType.Exclude
+		op.FilterDescendantsInstances = { ghost, player.Character }
+		op.RespectCanCollide = true
+		local free = #workspace:GetPartBoundsInBox(cf * CFrame.new(0, size.Y / 2 + 0.3, 0), size - V(0.3, 0.3, 0.3), op) == 0
+		local near = (r.Position - cam.CFrame.Position).Magnitude < 20
+		setGhostColor((free and near) and GOOD or BAD, true)
+		if free and near then
+			current = { tool = toolId, cf = cf }
+		end
 		return
 	end
-	local cf = Building.cframe(def.Id, O, a)
-	ghost.CFrame = cf
+
+	-- чертёж
+	local def = Building.Pieces[index]
+	pieceGhost(def.Id)
+	local a = r and Building.snap(def.Id, O, r.Position, r.Instance, cam.CFrame.LookVector, pieces())
+	hint.Text = def.Name .. "  ·  " .. costText(def.Cost) .. "\nR — выбрать деталь (круговое меню)  ·  ЛКМ — поставить" .. (def.Id == "foundation" and "" or def.Id == "door" and "  ·  наведи на проём" or "  ·  ставится на фундамент / стену")
+	if not a then
+		setGhostColor(BAD, false)
+		return
+	end
+	ghost:PivotTo(Building.cframe(def.Id, O, a))
+	local key = Building.key(def.Id, a)
 	local free = true
 	for _, p in ipairs(pieces()) do
-		if p:GetAttribute("Key") == Building.key(def.Id, a) then
+		if p:GetAttribute("Key") == key then
 			free = false
 		end
 	end
-	local enough = true
-	for k, n in pairs(def.Cost) do
-		if (player:GetAttribute("Res_" .. k) or 0) < n then
-			enough = false
-		end
-	end
-	ghost.Transparency = 0.25
-	ghost.Color = (free and enough) and RGB(90, 200, 255) or RGB(255, 80, 70)
+	setGhostColor((free and enough(def.Cost)) and GOOD or BAD, true)
 	if free then
 		current = { id = def.Id, a = a }
 	end
 end
 
--- ЛКМ с чертежом
-function BuildMode.place(remote)
-	if current then
-		remote:FireServer(current.id, current.a)
+-- ЛКМ с чертежом или предметом
+function BuildMode.place(buildRemote, placeRemote)
+	if current and current.id then
+		buildRemote:FireServer(current.id, current.a)
+		return true
+	elseif current and current.tool then
+		placeRemote:FireServer(current.tool, current.cf)
 		return true
 	end
 	return false
 end
 
-local _ = V
 return BuildMode
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="20">
+        <Item class="LocalScript" referent="21">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[-- Клиент «ЛАБИРИНТ»: интерфейс, прицел, руки, удары, тряска камеры, верстак, лифт, победа.
@@ -4371,6 +5175,8 @@ local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local Viewmodel = require(script.Parent:WaitForChild("Viewmodel"))
 local MonsterView = require(script.Parent:WaitForChild("MonsterView"))
 local BuildMode = require(script.Parent:WaitForChild("BuildMode"))
+local Radial = require(script.Parent:WaitForChild("Radial"))
+local PathfindingService = game:GetService("PathfindingService")
 MonsterView.start()
 
 local function remote(n)
@@ -4562,6 +5368,8 @@ make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = 
 local tools = {}
 local equipped = nil
 BuildMode.init(gui, make)
+Radial.init(gui)
+local toggleMap, updateMap, updatePings
 
 local function equip(id)
 	if id == equipped then
@@ -4827,18 +5635,241 @@ local function aimRay(range)
 	return workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * (range + 4), rayParams())
 end
 
+------------------------------------------------------------------
+-- Карта лабиринта (Tab): её нужно найти. Меняется вместе со стенами.
+------------------------------------------------------------------
+local mapPanel = make("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(600, 600),
+	BackgroundColor3 = RGB(214, 196, 150),
+	Visible = false,
+	ZIndex = 25,
+}, gui)
+corner(mapPanel, 14)
+make("UIStroke", { Color = RGB(90, 70, 40), Thickness = 4 }, mapPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 6), Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 18, TextColor3 = RGB(70, 50, 30), Text = "КАРТА ЛАБИРИНТА  ·  Tab — закрыть", ZIndex = 26 }, mapPanel)
+local mapCanvas = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 12), Size = UDim2.fromOffset(550, 550), BackgroundTransparency = 1, ZIndex = 26 }, mapPanel)
+local mapMe = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(12, 12), BackgroundColor3 = RGB(220, 30, 30), ZIndex = 29 }, mapCanvas)
+corner(mapMe, 6)
+local mapData
+local function mapScale()
+	return mapData and (550 / (mapData.radius * 2 + 80)) or 0.3
+end
+local function toMap(rel)
+	local sc = mapScale()
+	return UDim2.fromOffset(275 + rel.X * sc, 275 + rel.Z * sc)
+end
+local function drawMap()
+	for _, c in ipairs(mapCanvas:GetChildren()) do
+		if c ~= mapMe then
+			c:Destroy()
+		end
+	end
+	if not mapData then
+		return
+	end
+	local sc = mapScale()
+	local circle = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(275, 275), Size = UDim2.fromOffset(mapData.radius * 2 * sc, mapData.radius * 2 * sc), BackgroundTransparency = 1, ZIndex = 26 }, mapCanvas)
+	corner(circle, 1000)
+	make("UIStroke", { Color = RGB(120, 95, 60), Thickness = 2, Transparency = 0.5 }, circle)
+	local ch = mapData.clearing
+	local clr = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(275, 275), Size = UDim2.fromOffset(ch * 2 * sc, ch * 2 * sc), BackgroundColor3 = RGB(120, 160, 90), BackgroundTransparency = 0.3, ZIndex = 26 }, mapCanvas)
+	make("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = RGB(40, 60, 30), Text = "ПОЛЯНА", ZIndex = 27 }, clr)
+	for _, w in ipairs(mapData.walls) do
+		local axis, fixedC, a, b, crack = w[1], w[2], w[3], w[4], w[5]
+		local len = (b - a) * sc
+		local thick = math.max(2, 4 * sc)
+		local f
+		if axis == 1 then
+			f = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = toMap(V((a + b) / 2, 0, fixedC)), Size = UDim2.fromOffset(len, thick), BorderSizePixel = 0, ZIndex = 27 }, mapCanvas)
+		else
+			f = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = toMap(V(fixedC, 0, (a + b) / 2)), Size = UDim2.fromOffset(thick, len), BorderSizePixel = 0, ZIndex = 27 }, mapCanvas)
+		end
+		f.BackgroundColor3 = crack == 1 and RGB(160, 120, 70) or RGB(60, 45, 30)
+	end
+	local exitM = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = toMap(mapData.exit), Size = UDim2.fromOffset(70, 18), BackgroundColor3 = RGB(40, 140, 70), Font = Enum.Font.GothamBlack, TextSize = 12, TextColor3 = RGB(255, 255, 255), Text = "ВЫХОД", ZIndex = 28 }, mapCanvas)
+	corner(exitM, 4)
+end
+remote("MapData").OnClientEvent:Connect(function(walls, O, clearing, radius, exitRel)
+	mapData = { walls = walls, O = O, clearing = clearing, radius = radius, exit = exitRel }
+	if mapPanel.Visible then
+		drawMap()
+	else
+		mapData.dirty = true
+	end
+end)
+function toggleMap()
+	if mapPanel.Visible then
+		mapPanel.Visible = false
+		return
+	end
+	if (player:GetAttribute("Res_map") or 0) < 1 or not mapData then
+		notify("У тебя нет карты. Она лежит на столе где-то в лабиринте.")
+		return
+	end
+	mapData.dirty = false
+	drawMap()
+	mapPanel.Visible = true
+end
+function updateMap()
+	if not mapPanel.Visible then
+		return
+	end
+	if not inMatch() then
+		mapPanel.Visible = false
+		return
+	end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp and mapData then
+		mapMe.Position = toMap(hrp.Position - mapData.O)
+		mapMe.Visible = true
+	end
+end
+
+------------------------------------------------------------------
+-- Сигнал раненого: подсветка сквозь стены и стрелки на полу к нему
+------------------------------------------------------------------
+local pingFx = {} -- [player] = {hl, arrows, nextPath}
+local function clearPing(who)
+	local fx = pingFx[who]
+	if fx then
+		if fx.hl then
+			fx.hl:Destroy()
+		end
+		for _, a in ipairs(fx.arrows) do
+			a:Destroy()
+		end
+		pingFx[who] = nil
+	end
+end
+local pathObj = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = false, WaypointSpacing = 6 })
+local function drawArrows(fx, points)
+	for _, a in ipairs(fx.arrows) do
+		a:Destroy()
+	end
+	fx.arrows = {}
+	for k = 1, math.min(#points - 1, 16) do
+		local a, b = points[k], points[k + 1]
+		if (b - a).Magnitude > 0.5 then
+			local arrow = Instance.new("WedgePart")
+			arrow.Anchored = true
+			arrow.CanCollide = false
+			arrow.CanQuery = false
+			arrow.CastShadow = false
+			arrow.Size = V(2, 0.3, 2.4)
+			arrow.Material = Enum.Material.Neon
+			arrow.Color = RGB(255, 210, 60)
+			local flat = V(b.X - a.X, 0, b.Z - a.Z)
+			-- клин «смотрит» острым концом вперёд (-Z)
+			arrow.CFrame = CFrame.lookAt(a + V(0, 0.3, 0), a + V(0, 0.3, 0) + flat)
+			arrow.Parent = workspace.CurrentCamera
+			table.insert(fx.arrows, arrow)
+		end
+	end
+end
+function updatePings()
+	local now = workspace:GetServerTimeNow()
+	local char = player.Character
+	local myHrp = char and char:FindFirstChild("HumanoidRootPart")
+	for _, who in ipairs(Players:GetPlayers()) do
+		local active = who ~= player and inMatch() and (who:GetAttribute("PingUntil") or 0) > now and who:GetAttribute("Downed") == true and who.Character
+		if not active then
+			clearPing(who)
+		else
+			local fx = pingFx[who]
+			if not fx then
+				fx = { arrows = {}, nextPath = 0 }
+				local hl = Instance.new("Highlight")
+				hl.FillColor = RGB(255, 60, 60)
+				hl.OutlineColor = RGB(255, 230, 120)
+				hl.FillTransparency = 0.3
+				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				hl.Adornee = who.Character
+				hl.Parent = workspace.CurrentCamera
+				fx.hl = hl
+				pingFx[who] = fx
+			end
+			local theirs = who.Character:FindFirstChild("HumanoidRootPart")
+			if myHrp and theirs and os.clock() >= fx.nextPath and not fx.busy then
+				fx.nextPath = os.clock() + 1.5
+				fx.busy = true
+				local from, to = myHrp.Position, theirs.Position
+				task.spawn(function()
+					local pts
+					local ok = pcall(function()
+						pathObj:ComputeAsync(from, to)
+					end)
+					if ok and pathObj.Status == Enum.PathStatus.Success then
+						pts = {}
+						for _, w in ipairs(pathObj:GetWaypoints()) do
+							table.insert(pts, w.Position)
+						end
+					else
+						pts = {}
+						local dir = (to - from) * V(1, 0, 1)
+						for k = 0, 8 do
+							table.insert(pts, from - V(0, 2.8, 0) + dir.Unit * (4 + k * 5))
+						end
+					end
+					fx.busy = false
+					if pingFx[who] == fx then
+						drawArrows(fx, pts)
+					end
+				end)
+			end
+		end
+	end
+end
+
+-- раненое тело — тряпичная кукла (физику включаем на своём клиенте)
+player:GetAttributeChangedSignal("Downed"):Connect(function()
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return
+	end
+	if player:GetAttribute("Downed") then
+		hum:ChangeState(Enum.HumanoidStateType.Physics)
+	else
+		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+	end
+end)
+
+-- мигающие лампы (туннель, лаборатория, костры)
+task.spawn(function()
+	while true do
+		task.wait(0.09)
+		for _, l in ipairs(CollectionService:GetTagged("FlickerLight")) do
+			if l:IsA("Light") then
+				local base = l:GetAttribute("B0")
+				if not base then
+					base = l.Brightness
+					l:SetAttribute("B0", base)
+				end
+				local r = math.random()
+				l.Brightness = r < 0.06 and base * 0.1 or base * (0.85 + math.random() * 0.25)
+			end
+		end
+	end
+end)
+
 local function doSwing()
 	if not inMatch() or cutscene or craft.Visible then
 		return
 	end
+	if Radial.isOpen() then
+		return
+	end
 	local def = Items.Tools[equipped or "fists"] or Items.Tools.fists
-	if def.Kind == "blueprint" then
-		if BuildMode.place(remote("Build")) then
+	if def.Kind == "blueprint" or def.Kind == "deploy" then
+		if BuildMode.place(remote("Build"), remote("Place")) then
 			sound(Config.Sounds.Click, 0.6, 0.8)
 		end
 		return
 	end
-	if def.Kind == "torch" or player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") then
+	if def.Kind == "torch" or player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") or player:GetAttribute("Dragging") then
 		return -- факелом не бьют: он только светит
 	end
 	if os.clock() - lastSwing < 0.42 then
@@ -4878,9 +5909,20 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
 		doSwing()
-	elseif input.KeyCode == Enum.KeyCode.R and equipped == "blueprint" then
-		BuildMode.cycle()
-		sound(Config.Sounds.Click, 0.4, 1.2)
+	elseif input.KeyCode == Enum.KeyCode.R and inMatch() and not cutscene then
+		local kind = equipped and Items.Tools[equipped] and Items.Tools[equipped].Kind
+		if player:GetAttribute("Downed") then
+			remote("Ping"):FireServer()
+		elseif kind == "blueprint" then
+			BuildMode.pieceMenu(Radial)
+		elseif kind == "hammer" then
+			BuildMode.hammerMenu(Radial, remote("Upgrade"))
+		elseif kind == "deploy" then
+			BuildMode.rotate()
+			sound(Config.Sounds.Click, 0.4, 1.2)
+		end
+	elseif input.KeyCode == Enum.KeyCode.Tab and inMatch() and not cutscene then
+		toggleMap()
 	elseif input.KeyCode == Enum.KeyCode.H then
 		remote("Eat"):FireServer()
 	elseif input.KeyCode == Enum.KeyCode.C and inMatch() and not cutscene then
@@ -4899,6 +5941,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 end)
 UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.R and Radial.isOpen() then
+		Radial.confirm()
+	end
 	if input.KeyCode == Enum.KeyCode.LeftShift then
 		sprintHeld = false
 	end
@@ -5097,10 +6142,13 @@ end)
 ------------------------------------------------------------------
 -- Финал: дверь открыта, вертолёт садится и уносит всех из лабиринта
 ------------------------------------------------------------------
-local function buildHeli(cf)
+local function buildHeli(cf, K)
+	K = K or 1
 	local m = Instance.new("Model")
 	m.Name = "Helicopter"
 	local function p(size, rel, color, mat, extra)
+		size = size * K
+		rel = CFrame.new(rel.Position * K) * rel.Rotation
 		local pt = make("Part", { Anchored = true, CanCollide = false, CanQuery = false, Size = size, Color = color, Material = mat or Enum.Material.SmoothPlastic }, m)
 		if extra then
 			for k, v in pairs(extra) do
@@ -5171,70 +6219,206 @@ local function buildHeli(cf)
 	return m, setCF
 end
 
-remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins, mazeCenter)
+-- ходьба от первого лица по точкам: покачивание, шаги, друзья рядом
+local function walkPath(cam, points, duration, opts)
+	opts = opts or {}
+	local total = 0
+	local segLen = {}
+	for k = 1, #points - 1 do
+		segLen[k] = (points[k + 1] - points[k]).Magnitude
+		total += segLen[k]
+	end
+	local t0 = os.clock()
+	local nextStep = 0
+	runFor(duration, function(a)
+		local t = os.clock() - t0
+		local dist = total * smoothstep(a)
+		local k, acc = 1, 0
+		while k < #points - 1 and acc + segLen[k] < dist do
+			acc += segLen[k]
+			k += 1
+		end
+		local f = segLen[k] > 0 and math.clamp((dist - acc) / segLen[k], 0, 1) or 1
+		local pos = points[k]:Lerp(points[k + 1], f)
+		local dir = (points[k + 1] - points[k])
+		dir = dir.Magnitude > 0.01 and dir.Unit or V(0, 0, -1)
+		local bob = math.sin(t * 9) * 0.2
+		local side = math.cos(t * 4.5) * 0.1
+		local look = opts.lookAt and opts.lookAt(a, pos) or (pos + dir * 10 + V(0, (opts.pitch or 0) * 10, 0))
+		cam.CFrame = CFrame.lookAt(pos + V(side, bob, 0), look) * CFrame.Angles(0, 0, math.cos(t * 4.5) * 0.01)
+		if t >= nextStep and a < 0.98 then
+			nextStep = t + (opts.stepGap or 0.48)
+			sound(Config.Sounds.Step, 0.35, (opts.stepPitch or 0.75) + math.random() * 0.15)
+		end
+		if opts.each then
+			opts.each(a, pos, dir, t)
+		end
+	end)
+end
+
+-- ролик у выхода: туннель → мост над пропастью → дверь лаборатории и считыватель
+remote("ExitIntro").OnClientEvent:Connect(function(exitOut, doorFront, readerPos)
 	cutscene = true
 	craft.Visible = false
+	Radial.close()
+	local cam = workspace.CurrentCamera
+	cam.CameraType = Enum.CameraType.Scriptable
+	local b = exitOut
+	subtitle.Text = "Туннель... В самом конце — свет."
+	walkPath(cam, { (b * CFrame.new(0, 5, -4)).Position, (b * CFrame.new(0, 5, -66)).Position }, 4.6)
+	subtitle.Text = "Пропасть... Не смотри вниз. Только по мосту."
+	walkPath(cam, { (b * CFrame.new(0, 5, -66)).Position, (b * CFrame.new(0, 5.3, -108)).Position }, 4, {
+		stepGap = 0.6,
+		stepPitch = 0.55,
+		lookAt = function(a, pos)
+			local down = math.sin(math.clamp((a - 0.15) / 0.5, 0, 1) * math.pi) * 9
+			return pos + b.LookVector * 10 - V(0, down, 0) + b.RightVector * math.sin(a * 6) * 1.5
+		end,
+	})
+	local eye = (b * CFrame.new(0, 5.3, -108)).Position
+	local fromLook = eye + b.LookVector * 10
+	subtitle.Text = "Дверь... и считыватель. Ключ-карта! Нужно приложить ключ-карту."
+	runFor(1.2, function(a)
+		cam.CFrame = CFrame.lookAt(eye, fromLook:Lerp(readerPos, smoothstep(a)))
+	end)
+	task.wait(1.4)
+	subtitle.Text = ""
+	cam.CameraType = Enum.CameraType.Custom
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		cam.CameraSubject = hum
+	end
+	cutscene = false
+	notify("Достань ключ-карту и приложи к считывателю (E). Ключ-карта — в золотом сундуке.")
+	local _ = doorFront
+end)
+
+-- достаём ключ-карту из кармана и прикладываем к считывателю
+remote("CardInsert").OnClientEvent:Connect(function(readerPos)
+	cutscene = true
+	Radial.close()
+	local cam = workspace.CurrentCamera
+	local eye = cam.CFrame.Position
+	cam.CameraType = Enum.CameraType.Scriptable
+	local from = cam.CFrame
+	runFor(0.5, function(a)
+		cam.CFrame = from:Lerp(CFrame.lookAt(eye, readerPos), smoothstep(a))
+	end)
+	Viewmodel.card()
+	task.wait(1.1)
+	sound(Config.Sounds.Click, 0.8, 1.6)
+	task.wait(0.2)
+	sound(Config.Sounds.Click, 0.8, 2)
+end)
+
+remote("MazeShift").OnClientEvent:Connect(function()
+	shake(0.9)
+	sound(Config.Sounds.Rumble, 1.5, 0.35)
+	task.delay(1.2, function()
+		shake(0.6)
+	end)
+end)
+
+remote("Outro").OnClientEvent:Connect(function(info)
+	cutscene = true
+	craft.Visible = false
+	Radial.close()
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Scriptable
 	local temp = {}
-	mazeCenter = mazeCenter or (exitOut.Position - exitOut.LookVector * 500)
-
-	-- вертолёт уже ждёт на лесной поляне, винты крутятся
-	local heliCF = pad * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0)
-	local heli, setCF = buildHeli(heliCF)
-	table.insert(temp, heli)
-	local rotor = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 0.8, PlaybackSpeed = 0.7 }, SoundService)
-	rotor:Play()
+	local mazeCenter = info.mazeCenter
+	local b = info.exitOut
+	local fwd = b.LookVector
 
 	-- друзья идут рядом
 	local friends = {}
 	local k = 0
-	for _, who in ipairs(players) do
+	for _, who in ipairs(info.players) do
 		if who ~= player then
 			k += 1
 			local av = cloneAvatar(who)
 			if av then
 				av.Parent = workspace
 				table.insert(temp, av)
-				table.insert(friends, { m = av, side = (k % 2 == 1) and -4 or 4, back = 3 + math.floor((k - 1) / 2) * 4 })
+				table.insert(friends, { m = av, side = (k % 2 == 1) and -3.5 or 3.5, back = 2 + math.floor((k - 1) / 2) * 3.5 })
 			end
 		end
 	end
-
-	-- 1. ворота поднимаются
-	local start = exitOut * CFrame.new(0, 5.4, -40)
-	subtitle.Text = "Ворота поднимаются... За ними — свет."
-	runFor(4.5, function()
-		cam.CFrame = start * CFrame.Angles(math.noise(os.clock() * 3) * 0.01, 0, 0)
-		setCF(heliCF, 1 / 60)
-	end)
-
-	-- 2. идём от первого лица: покачивание камеры и хруст травы под ногами
-	subtitle.Text = "Лес... Настоящий лес. Мы выбрались!"
-	local target = pad * CFrame.new(0, 5.4, 16)
-	local from, to = start.Position, target.Position
-	local walkTime = 8
-	local nextStep = 0
-	local t0 = os.clock()
-	runFor(walkTime, function(a)
-		local t = os.clock() - t0
-		local pos = from:Lerp(to, a)
-		local bob = math.sin(t * 9) * 0.22
-		local sideBob = math.cos(t * 4.5) * 0.12
-		local look = pos + (to - from).Unit * 10 + V(math.sin(t * 0.7) * 2.5, -0.8, 0)
-		cam.CFrame = CFrame.lookAt(pos + V(sideBob, bob, 0), look) * CFrame.Angles(0, 0, math.cos(t * 4.5) * 0.012)
-		if t >= nextStep then
-			nextStep = t + 0.48
-			sound(Config.Sounds.Step, 0.35, 0.7 + math.random() * 0.15)
-		end
+	local function moveFriends(pos, dir, t)
+		local right = dir:Cross(V(0, 1, 0))
 		for _, f in ipairs(friends) do
-			local fp = from:Lerp(to, math.max(0, a - 0.04)) + (exitOut.RightVector * f.side) + exitOut.LookVector * f.back - V(0, 2.4, 0) + V(0, math.abs(math.sin(t * 9)) * 0.3, 0)
-			f.m:PivotTo(CFrame.lookAt(fp, fp - exitOut.LookVector))
+			local fp = pos + right * f.side - dir * f.back - V(0, 2.4, 0) + V(0, math.abs(math.sin(t * 9)) * 0.25, 0)
+			f.m:PivotTo(CFrame.lookAt(fp, fp + dir))
 		end
-		setCF(heliCF, 1 / 60)
+	end
+
+	-- 1. дверь лаборатории поднимается
+	local eye0 = (b * CFrame.new(0, 5.3, -106)).Position
+	subtitle.Text = "Дверь открывается..."
+	runFor(3, function()
+		cam.CFrame = CFrame.lookAt(eye0, info.labStart.Position) * CFrame.Angles(math.noise(os.clock() * 3) * 0.008, 0, 0)
 	end)
 
-	-- 3. садимся в вертолёт
+	-- 2. идём через пустую лабораторию
+	subtitle.Text = "Лаборатория... Здесь никого нет. Будто все ушли в спешке."
+	walkPath(cam, { eye0, info.labStart.Position, info.labEnd.Position }, 11, {
+		stepPitch = 0.9,
+		lookAt = function(a, pos)
+			local sway = math.sin(a * math.pi * 3) * 6
+			return pos + fwd * 10 + b.RightVector * sway - V(0, 1, 0)
+		end,
+		each = function(_, pos, dir, t)
+			moveFriends(pos, dir, t)
+		end,
+	})
+
+	-- 3. вторая дверь открывается — снаружи свет и шум винтов
+	subtitle.Text = "Ещё одна дверь..."
+	local back = info.backDoor
+	if back and back.Parent then
+		local goal = back.CFrame + V(0, 11, 0)
+		TweenService:Create(back, TweenInfo.new(2.4, Enum.EasingStyle.Sine), { CFrame = goal }):Play()
+	end
+	local eye1 = info.labEnd.Position
+	runFor(2.6, function()
+		cam.CFrame = CFrame.lookAt(eye1, eye1 + fwd * 10) * CFrame.Angles(math.noise(os.clock() * 4) * 0.01, 0, 0)
+	end)
+
+	-- 4. огромный вертолёт садится на площадку
+	local K = 1.8
+	local pad = info.pad
+	local heliCF = pad * CFrame.new(0, 0.6 * K, 0) * CFrame.Angles(0, math.pi / 2, 0)
+	local startCF = heliCF + V(0, 140, 0) + fwd * 160
+	local heli, setCF = buildHeli(startCF, K)
+	table.insert(temp, heli)
+	local rotor = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 1, PlaybackSpeed = 0.7 }, SoundService)
+	rotor:Play()
+	subtitle.Text = "Вертолёт! Он садится прямо перед нами!"
+	local outside = (pad * CFrame.new(0, 5.3, 0)).Position - fwd * 34
+	local heliNow = startCF
+	walkPath(cam, { eye1, outside }, 9, {
+		lookAt = function(_, pos)
+			local hp = heliNow.Position
+			return pos:Lerp(hp, 0.5) + (hp - pos).Unit * 10
+		end,
+		each = function(a, pos, dir, t)
+			moveFriends(pos, dir, t)
+			local e = smoothstep(math.clamp(a * 1.15, 0, 1))
+			local cf = startCF:Lerp(heliCF, e) * CFrame.Angles(0.12 * (1 - e), 0, math.sin(t * 1.3) * 0.04 * (1 - e))
+			heliNow = cf
+			setCF(cf, 1 / 60)
+			if e > 0.85 then
+				shake(0.02)
+			end
+		end,
+	})
+	runFor(1.5, function()
+		setCF(heliCF, 1 / 60)
+		cam.CFrame = CFrame.lookAt(outside, heliCF.Position)
+	end)
+
+	-- 5. садимся у открытой боковой двери
 	subtitle.Text = "Залезаем!"
 	fade.BackgroundColor3 = RGB(0, 0, 0)
 	TweenService:Create(fade, TweenInfo.new(0.4), { BackgroundTransparency = 0 }):Play()
@@ -5242,32 +6426,29 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	for _, f in ipairs(friends) do
 		f.m:Destroy()
 	end
-	-- место у открытой боковой двери: камера снаружи корпуса, винт выше кадра
-	local seat = CFrame.new(5.4, 4.6, 2.6)
-	cam.CFrame = CFrame.lookAt((heliCF * seat).Position, (heliCF * CFrame.new(30, 2, 2.6)).Position)
+	local seat = CFrame.new(5.4 * K, 4.6 * K, 2.6 * K)
+	cam.CFrame = CFrame.lookAt((heliCF * seat).Position, (heliCF * CFrame.new(30 * K, 2, 2.6 * K)).Position)
 	TweenService:Create(fade, TweenInfo.new(0.6), { BackgroundTransparency = 1 }):Play()
 
-	-- 4. взлёт: поднимаемся высоко над лабиринтом и смотрим на него целиком
+	-- 6. взлёт: высоко над лабиринтом, смотрим на него целиком
 	subtitle.Text = "Взлетаем... Вот он — весь лабиринт."
-	local liftTime = 10
-	local high = heliCF.Position:Lerp(mazeCenter, 0.35) + V(0, 420, 0)
-	runFor(liftTime, function(a)
-		local e = a * a * (3 - 2 * a)
+	local high = heliCF.Position:Lerp(mazeCenter, 0.35) + V(0, 520, 0)
+	runFor(11, function(a)
+		local e = smoothstep(a)
 		local pos = heliCF.Position:Lerp(high, e)
 		local toMaze = (mazeCenter - pos) * V(1, 0, 1)
 		local hc = CFrame.lookAt(pos, pos + V(toMaze.Z, 0, -toMaze.X)) * CFrame.Angles(-0.08 * math.sin(a * math.pi), 0, 0)
 		setCF(hc, 1 / 60)
-		local eye = (hc * seat).Position
-		cam.CFrame = CFrame.lookAt(eye, mazeCenter) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
+		cam.CFrame = CFrame.lookAt((hc * seat).Position, mazeCenter) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
 	end)
 	task.wait(2.5)
 
-	-- 5. улетаем
+	-- 7. улетаем к горизонту
 	subtitle.Text = "Прощай, лабиринт."
 	local away = (high - mazeCenter) * V(1, 0, 1)
 	away = away.Magnitude > 1 and away.Unit or V(1, 0, 0)
 	runFor(5, function(a)
-		local pos = high + away * 600 * a * a + V(0, 60 * a, 0)
+		local pos = high + away * 700 * a * a + V(0, 60 * a, 0)
 		local hc = CFrame.lookAt(pos, pos + V(-away.Z, 0, away.X))
 		setCF(hc, 1 / 60)
 		cam.CFrame = CFrame.lookAt((hc * seat).Position, mazeCenter)
@@ -5282,11 +6463,11 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	task.wait(1.3)
 	subtitle.Text = ""
 	lobbyLabel.ZIndex = 22
-	lobbyLabel.Text = "ВЫ ВЫБРАЛИСЬ ИЗ ЛАБИРИНТА!\nДней в лабиринте: " .. day .. "   ·   +" .. coins .. " монет"
+	lobbyLabel.Text = "ВЫ ВЫБРАЛИСЬ ИЗ ЛАБИРИНТА!\nДней в лабиринте: " .. info.day .. "   ·   +" .. info.coins .. " монет"
 	task.wait(4)
 	-- ждём, пока сервер вернёт нас в лобби, и только потом убираем чёрный экран
 	local waitT = os.clock()
-	while inMatch() and os.clock() - waitT < 12 do
+	while inMatch() and os.clock() - waitT < 14 do
 		task.wait(0.1)
 	end
 	local char = player.Character or player.CharacterAdded:Wait()
@@ -5563,11 +6744,21 @@ RunService.RenderStepped:Connect(function(dt)
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	local playing = inMatch() and not cutscene
 
-	-- камера
-	player.CameraMode = playing and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
-	if not playing then
-		player.CameraMaxZoomDistance = 18
+	-- камера: ранен — вид от третьего лица на своё тело
+	local isDown = player:GetAttribute("Downed") == true and inMatch()
+	player.CameraMode = (playing and not isDown) and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
+	if isDown then
+		player.CameraMinZoomDistance = 9
+		player.CameraMaxZoomDistance = 16
+	else
+		player.CameraMinZoomDistance = 0.5
+		if not playing then
+			player.CameraMaxZoomDistance = 18
+		end
 	end
+	Radial.update()
+	updatePings()
+	updateMap()
 
 	-- лобби
 	titleLabel.Visible = false
@@ -5598,7 +6789,7 @@ RunService.RenderStepped:Connect(function(dt)
 	applyLighting(inMatch() and phase or nil, math.clamp(elapsed / pLen, 0, 1))
 
 	-- курсор только в меню
-	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or notePanel.Visible or cursorForced()
+	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or notePanel.Visible or Radial.isOpen() or cursorForced()
 
 	-- ранение
 	local downed = player:GetAttribute("Downed") == true
@@ -5614,7 +6805,10 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 	if downed then
 		local dl = (player:GetAttribute("DownedEnd") or 0) - workspace:GetServerTimeNow()
-		downedText.Text = "ТЫ РАНЕН\nДруг может поднять тебя бинтом (зажать E рядом с тобой)\nОчнёшься у лифта через " .. formatTime(dl)
+		local pn = (player:GetAttribute("PingNext") or 0) - workspace:GetServerTimeNow()
+		downedText.Text = "ТЫ РАНЕН\nДруг может поднять тебя бинтом (E) или утащить за ногу (F)\n"
+			.. (pn > 0 and ("Сигнал снова через " .. math.ceil(pn) .. " с") or "R — позвать на помощь (друзья увидят тебя и стрелки)")
+			.. "\nОчнёшься у лифта через " .. formatTime(dl)
 	end
 	if hum and inMatch() then
 		hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
@@ -5627,7 +6821,8 @@ RunService.RenderStepped:Connect(function(dt)
 		hpFill.Size = UDim2.fromScale(math.clamp(hum.Health / hum.MaxHealth, 0, 1), 1)
 		hpText.Text = math.floor(hum.Health) .. " / " .. hum.MaxHealth
 		local moving = hum.MoveDirection.Magnitude > 0.1
-		local sprinting = playing and sprintHeld and moving and not exhausted and stamina > 0 and not crouched
+		local dragging = player:GetAttribute("Dragging") == true
+		local sprinting = playing and sprintHeld and moving and not exhausted and stamina > 0 and not crouched and not dragging
 		if sprinting then
 			stamina = math.max(0, stamina - Config.StaminaDrain * dt)
 			exhausted = stamina <= 0
@@ -5644,10 +6839,10 @@ RunService.RenderStepped:Connect(function(dt)
 		elseif crouched then
 			hum.WalkSpeed = Config.CrouchSpeed
 		else
-			hum.WalkSpeed = sprinting and sprint or Config.WalkSpeed
+			hum.WalkSpeed = (sprinting and sprint or Config.WalkSpeed) * (dragging and 0.75 or 1)
 		end
 		stFill.Size = UDim2.fromScale(stamina / staminaMax(), 1)
-		vmState.visible, vmState.moving, vmState.sprinting = playing, moving, sprinting
+		vmState.visible, vmState.moving, vmState.sprinting = playing and not downed, moving, sprinting
 
 	else
 		vmState.visible = false
@@ -5655,7 +6850,7 @@ RunService.RenderStepped:Connect(function(dt)
 
 	-- строительство
 	local eqKind = equipped and Items.Tools[equipped] and Items.Tools[equipped].Kind
-	BuildMode.update((playing and (eqKind == "blueprint" or eqKind == "hammer")) and eqKind or nil, rayParams())
+	BuildMode.update((playing and not downed and (eqKind == "blueprint" or eqKind == "hammer" or eqKind == "deploy")) and eqKind or nil, rayParams(), equipped)
 
 	-- прицел
 	cross.Visible = playing
@@ -5851,7 +7046,7 @@ make("TextLabel", {
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">MonsterView</string>
             <string name="Source"><![CDATA[-- Внешний вид Скрежетника (рисуется на клиенте): тело-слизень, костяные шипы,
@@ -6220,7 +7415,183 @@ return MonsterView
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="22">
+        <Item class="ModuleScript" referent="23">
+          <Properties>
+            <string name="Name">Radial</string>
+            <string name="Source"><![CDATA[-- Круговое меню (как в Rust): кольцо из секторов, выбран тот, на который смотрит мышь.
+-- Отпусти клавишу или нажми ЛКМ — выбор применяется.
+
+local UserInputService = game:GetService("UserInputService")
+
+local Radial = {}
+
+local RGB = Color3.fromRGB
+local V2 = Vector2.new
+
+local root, center, centerTitle, centerSub, modal
+local segs = {}
+local options, onPick, selected
+
+function Radial.init(gui)
+	root = Instance.new("Frame")
+	root.Name = "Radial"
+	root.AnchorPoint = V2(0.5, 0.5)
+	root.Position = UDim2.fromScale(0.5, 0.5)
+	root.Size = UDim2.fromOffset(420, 420)
+	root.BackgroundTransparency = 1
+	root.Visible = false
+	root.ZIndex = 30
+	root.Parent = gui
+	center = Instance.new("Frame")
+	center.AnchorPoint = V2(0.5, 0.5)
+	center.Position = UDim2.fromScale(0.5, 0.5)
+	center.Size = UDim2.fromOffset(150, 150)
+	center.BackgroundColor3 = RGB(16, 18, 22)
+	center.BackgroundTransparency = 0.15
+	center.ZIndex = 30
+	center.Parent = root
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(1, 0)
+	c.Parent = center
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = RGB(200, 210, 160)
+	stroke.Thickness = 2
+	stroke.Parent = center
+	centerTitle = Instance.new("TextLabel")
+	centerTitle.Size = UDim2.new(1, -16, 0, 50)
+	centerTitle.Position = UDim2.fromOffset(8, 30)
+	centerTitle.BackgroundTransparency = 1
+	centerTitle.Font = Enum.Font.GothamBlack
+	centerTitle.TextSize = 17
+	centerTitle.TextWrapped = true
+	centerTitle.TextColor3 = RGB(245, 240, 220)
+	centerTitle.ZIndex = 31
+	centerTitle.Parent = center
+	centerSub = Instance.new("TextLabel")
+	centerSub.Size = UDim2.new(1, -16, 0, 50)
+	centerSub.Position = UDim2.fromOffset(8, 80)
+	centerSub.BackgroundTransparency = 1
+	centerSub.Font = Enum.Font.Gotham
+	centerSub.TextSize = 12
+	centerSub.TextWrapped = true
+	centerSub.TextColor3 = RGB(200, 200, 190)
+	centerSub.ZIndex = 31
+	centerSub.Parent = center
+	-- кнопка-«модал» освобождает мышь в виде от первого лица
+	modal = Instance.new("TextButton")
+	modal.Size = UDim2.fromScale(1, 1)
+	modal.BackgroundTransparency = 1
+	modal.Text = ""
+	modal.Modal = true
+	modal.ZIndex = 29
+	modal.Parent = root
+	modal.MouseButton1Click:Connect(function()
+		Radial.confirm()
+	end)
+end
+
+function Radial.isOpen()
+	return root and root.Visible
+end
+
+-- opts: { {label=, sub=, color=}, ... }
+function Radial.open(opts, pick)
+	if not root then
+		return
+	end
+	for _, s in ipairs(segs) do
+		s:Destroy()
+	end
+	segs = {}
+	options, onPick, selected = opts, pick, nil
+	local n = #opts
+	for k, o in ipairs(opts) do
+		-- сектор: «треугольник» — повёрнутая плашка, смотрящая от центра
+		local a = (k - 1) / n * math.pi * 2 - math.pi / 2
+		local f = Instance.new("TextButton")
+		f.AutoButtonColor = false
+		f.AnchorPoint = V2(0.5, 0.5)
+		f.Position = UDim2.new(0.5, math.cos(a) * 150, 0.5, math.sin(a) * 150)
+		f.Size = UDim2.fromOffset(n > 6 and 104 or 120, 64)
+		f.BackgroundColor3 = o.color or RGB(40, 44, 50)
+		f.BackgroundTransparency = 0.2
+		f.Font = Enum.Font.GothamBold
+		f.TextSize = 13
+		f.TextWrapped = true
+		f.TextColor3 = RGB(240, 240, 235)
+		f.Text = o.label
+		f.ZIndex = 31
+		f.Parent = root
+		local cr = Instance.new("UICorner")
+		cr.CornerRadius = UDim.new(0, 10)
+		cr.Parent = f
+		local st = Instance.new("UIStroke")
+		st.Thickness = 0
+		st.Color = RGB(255, 230, 120)
+		st.Parent = f
+		-- «остриё» треугольника к центру
+		local tip = Instance.new("Frame")
+		tip.AnchorPoint = V2(0.5, 0.5)
+		tip.Size = UDim2.fromOffset(16, 16)
+		tip.Rotation = 45
+		tip.Position = UDim2.new(0.5, -math.cos(a) * 40, 0.5, -math.sin(a) * 40)
+		tip.BackgroundColor3 = o.color or RGB(40, 44, 50)
+		tip.BackgroundTransparency = 0.2
+		tip.ZIndex = 30
+		tip.Parent = f
+		f.MouseButton1Click:Connect(function()
+			selected = k
+			Radial.confirm()
+		end)
+		table.insert(segs, f)
+	end
+	root.Visible = true
+end
+
+function Radial.close()
+	if root then
+		root.Visible = false
+	end
+	options, onPick = nil, nil
+end
+
+function Radial.confirm()
+	local o, pick, k = options, onPick, selected
+	Radial.close()
+	if o and pick and k and o[k] then
+		pick(k, o[k])
+	end
+end
+
+function Radial.update()
+	if not Radial.isOpen() or not options then
+		return
+	end
+	local mouse = UserInputService:GetMouseLocation()
+	local abs = root.AbsolutePosition + root.AbsoluteSize / 2
+	local d = mouse - abs
+	selected = nil
+	if d.Magnitude > 50 then
+		local a = math.atan2(d.Y, d.X) + math.pi / 2
+		local n = #options
+		selected = math.floor((a / (math.pi * 2)) * n + 0.5) % n + 1
+	end
+	for k, f in ipairs(segs) do
+		local on = k == selected
+		f.UIStroke.Thickness = on and 3 or 0
+		f.BackgroundTransparency = on and 0 or 0.25
+		f.Size = on and UDim2.fromOffset(#segs > 6 and 116 or 132, 72) or UDim2.fromOffset(#segs > 6 and 104 or 120, 64)
+	end
+	local o = selected and options[selected]
+	centerTitle.Text = o and o.label or "Наведи мышь"
+	centerSub.Text = o and (o.sub or "") or ""
+end
+
+return Radial
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">Viewmodel</string>
             <string name="Source"><![CDATA[-- Руки от первого лица — это копии рук твоего персонажа (с футболкой и цветом кожи).
@@ -6246,6 +7617,7 @@ local armLen = { right = 2.4, left = 2.4 }
 local itemModel, itemId
 local swingT, swingKind, punchLeft
 local equipT = 1
+local cardT, cardPart
 local sway = CFrame.new()
 local lastCam
 local bobT = 0
@@ -6369,6 +7741,34 @@ function Viewmodel.swing(kind)
 	return true
 end
 
+-- достать ключ-карту из кармана и приложить к считывателю
+function Viewmodel.card()
+	cardT = 0
+	if cardPart then
+		cardPart:Destroy()
+	end
+	local c = Instance.new("Part")
+	c.Name = "KeyCard"
+	c.Size = Vector3.new(1.1, 0.06, 1.6)
+	c.Color = RGB(240, 240, 235)
+	c.Material = Enum.Material.SmoothPlastic
+	c.Anchored = true
+	c.CanCollide = false
+	c.CanQuery = false
+	c.CastShadow = false
+	local stripe = Instance.new("Part")
+	stripe.Name = "Stripe"
+	stripe.Size = Vector3.new(1.12, 0.07, 0.3)
+	stripe.Color = RGB(255, 200, 60)
+	stripe.Material = Enum.Material.Neon
+	stripe.Anchored = true
+	stripe.CanCollide = false
+	stripe.CanQuery = false
+	stripe.Parent = c
+	c.Parent = vm or workspace.CurrentCamera
+	cardPart = c
+end
+
 local function setVisible(on)
 	if not vm then
 		return
@@ -6384,6 +7784,10 @@ local function setVisible(on)
 			d.Enabled = on
 		end
 	end
+end
+
+local function smooth01(a)
+	return a * a * (3 - 2 * a)
 end
 
 local function ease(a)
@@ -6464,6 +7868,7 @@ function Viewmodel.update(dt, visible, moving, sprinting)
 	if not vm or vm.Parent ~= workspace.CurrentCamera then
 		Viewmodel.rebuild()
 	end
+	visible = visible or cardT ~= nil
 	setVisible(visible)
 	if not visible then
 		return
@@ -6517,6 +7922,36 @@ function Viewmodel.update(dt, visible, moving, sprinting)
 	local grip = placeArm("right", rShoulder)
 	placeArm("left", lShoulder)
 
+	if cardT then
+		-- рука идёт снизу из кармана, вытягивается вперёд и прикладывает карту
+		cardT += dt / 1.6
+		local up = smooth01(math.min(1, cardT / 0.45))
+		local poke = cardT > 0.55 and math.sin(math.min(1, (cardT - 0.55) / 0.35) * math.pi) * 0.6 or 0
+		local sh = base * CFrame.new(0.7, -1.6 + up * 0.55, 0.2 - poke) * CFrame.Angles(math.rad(40 + 58 * up), math.rad(-22 * up), 0)
+		local g = placeArm("right", sh)
+		if itemModel then
+			for _, d in ipairs(itemModel:GetDescendants()) do
+				if d:IsA("BasePart") then
+					d.LocalTransparencyModifier = 1
+				end
+			end
+		end
+		if cardPart then
+			cardPart.CFrame = g * CFrame.new(0, -0.4, -0.2) * CFrame.Angles(0, 0, math.rad(90))
+			local stripe = cardPart:FindFirstChild("Stripe")
+			if stripe then
+				stripe.CFrame = cardPart.CFrame * CFrame.new(0, 0, -0.5)
+			end
+		end
+		if cardT >= 1 then
+			cardT = nil
+			if cardPart then
+				cardPart:Destroy()
+				cardPart = nil
+			end
+		end
+		return
+	end
 	if itemModel then
 		itemModel:PivotTo(grip * hold(kindOf()))
 	end
@@ -6529,7 +7964,7 @@ return Viewmodel
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="23">
+  <Item class="Workspace" referent="25">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="NeedsPivotMigration">false</bool>

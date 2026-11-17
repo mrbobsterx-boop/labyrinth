@@ -8,6 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Parts = require(script.Parent.Parts)
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local Items = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Items"))
+local Deployables = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Deployables"))
 
 local World = {}
 
@@ -39,6 +40,15 @@ end
 
 local function inClearing(i, j)
 	return i >= CLEAR_LO and i <= CLEAR_HI and j >= CLEAR_LO and j <= CLEAR_HI
+end
+
+-- клетка внутри круга лабиринта (и не на поляне)
+local function inMaze(i, j)
+	if i < 0 or j < 0 or i >= N or j >= N or inClearing(i, j) then
+		return false
+	end
+	local di, dj = i - MID, j - MID
+	return di * di + dj * dj <= MZ.Radius * MZ.Radius
 end
 
 local function tag(inst, name)
@@ -111,18 +121,9 @@ World.node = node
 -- Верстак (крафтится игроком и ставится перед собой)
 ------------------------------------------------------------------
 function World.BuildWorkbench(parent, cf)
-	local wb = Instance.new("Model")
+	local wb = Deployables.build("workbench", cf)
 	wb.Name = "Workbench"
-	local top = Parts.box(wb, "Top", cf * CFrame.new(0, 3.45, 0), V(8, 0.5, 4), RGB(110, 80, 50), M.WoodPlanks)
-	for _, x in ipairs({ -3.5, 3.5 }) do
-		for _, z in ipairs({ -1.5, 1.5 }) do
-			Parts.box(wb, "Leg", cf * CFrame.new(x, 1.6, z), V(0.6, 3.2, 0.6), WOOD, M.Wood)
-		end
-	end
-	Parts.box(wb, "Shelf", cf * CFrame.new(0, 1, 0), V(7.4, 0.3, 3.4), WOOD, M.WoodPlanks)
-	Parts.box(wb, "Vise", cf * CFrame.new(3, 4.1, -1), V(1.1, 0.9, 1), METAL, M.Metal)
-	Parts.box(wb, "Saw", cf * CFrame.new(-1.7, 3.75, 0.9), V(2.5, 0.1, 0.8), RGB(170, 170, 175), M.Metal)
-	Parts.box(wb, "Hammer", cf * CFrame.new(0.8, 3.8, -1.05), V(1.6, 0.25, 0.3), WOOD, M.Wood)
+	local top = wb:FindFirstChild("Top")
 	local p = prompt(top, "Крафт", "Верстак", 0, 10)
 	local bb = Instance.new("BillboardGui")
 	bb.Size = UDim2.new(0, 200, 0, 36)
@@ -302,24 +303,11 @@ function World.BuildLobby()
 end
 
 ------------------------------------------------------------------
--- Рельеф: земля лабиринта, трава поляны, река
+-- Рельеф
 ------------------------------------------------------------------
--- озеро сверху слева (северо-запад), из него на восток течёт река
-local LAKE = V(-112, 0, -112)
-local LAKE_R, SAND_R = 74, 92
-local RIVER = { V(-50, 0, -96), V(40, 0, -74), V(120, 0, -40), V(196, 0, -26) }
-
-local function distToWater(p)
-	local best = (V(p.X, 0, p.Z) - LAKE).Magnitude - LAKE_R
-	for k = 1, #RIVER - 1 do
-		local a, b = RIVER[k], RIVER[k + 1]
-		local ab = b - a
-		local t = math.clamp((p - a):Dot(ab) / ab:Dot(ab), 0, 1)
-		local q = a + ab * t
-		best = math.min(best, (V(p.X, 0, p.Z) - V(q.X, 0, q.Z)).Magnitude)
-	end
-	return best
-end
+local RAD = MZ.Radius * C -- радиус круглого лабиринта в studs
+World.RADIUS = RAD
+local LAKE_R, SAND_R = 62, 76
 
 local function safe(fn)
 	local ok, err = pcall(fn)
@@ -328,6 +316,7 @@ local function safe(fn)
 	end
 end
 
+-- огромная земля вокруг (одинаковая для этого места, строится один раз)
 local terrainBuilt = {}
 function World.BuildTerrain(O)
 	if terrainBuilt[O.X] then
@@ -335,57 +324,27 @@ function World.BuildTerrain(O)
 	end
 	terrainBuilt[O.X] = true
 	local terrain = workspace.Terrain
-	local size = Config.SlotSpacing - 120
-	-- снаружи лабиринта трава (там лес), внутри коридоров — утоптанная земля
+	local size = Config.SlotSpacing - 160
 	safe(function()
-		terrain:FillBlock(CFrame.new(O + V(0, -8, 0)), V(size, 16, size), M.Grass)
+		terrain:FillBlock(CFrame.new(O + V(0, -4, 0)), V(size, 8, size), M.Grass)
 	end)
+	-- внутри круглого лабиринта — утоптанная земля
 	safe(function()
-		terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(HALF * 2 + 8, 4, HALF * 2 + 8), M.Ground)
+		terrain:FillCylinder(CFrame.new(O + V(0, -2, 0)), 4, RAD + 24, M.Ground)
 	end)
-	safe(function()
-		terrain:FillBlock(CFrame.new(O + V(0, -2, 0)), V(CLEAR_HALF * 2, 4, CLEAR_HALF * 2), M.Grass)
-	end)
-	-- озеро и река. Сначала весь песок, потом выемка, потом вода —
-	-- иначе песок следующего куска реки закрывает воду предыдущего.
-	local segs = {}
-	for k = 1, #RIVER - 1 do
-		local a, b = O + RIVER[k], O + RIVER[k + 1]
-		local mid = (a + b) / 2
-		table.insert(segs, { cf = CFrame.lookAt(mid, mid + (b - a)), len = (b - a).Magnitude })
-	end
-	local function fillWater(mat, lakeR, riverW, y, h)
-		safe(function()
-			terrain:FillCylinder(CFrame.new(O + LAKE + V(0, y, 0)), h, lakeR, mat)
-		end)
-		for _, sg in ipairs(segs) do
-			safe(function()
-				terrain:FillBlock(sg.cf * CFrame.new(0, y, 0), V(riverW, h, sg.len), mat)
-			end)
-		end
-		-- круглые стыки, чтобы на поворотах не было ступенек
-		for k = 2, #RIVER do
-			safe(function()
-				terrain:FillCylinder(CFrame.new(O + RIVER[k] + V(0, y, 0)), h, riverW / 2, mat)
-			end)
-		end
-	end
-	fillWater(M.Sand, SAND_R, 30, -2, 4)
-	fillWater(M.Air, LAKE_R, 16, 1, 6)
-	fillWater(M.Water, LAKE_R, 16, -6, 10)
-	-- холмы и горы вдалеке, чтобы с вертолёта не было видно края мира
+	-- холмы и горы до самого горизонта
 	local rng = Random.new(O.X + 11)
-	for k = 1, 22 do
-		local a = k / 22 * math.pi * 2 + rng:NextNumber(-0.1, 0.1)
-		local dist = rng:NextNumber(HALF + 420, HALF + 760)
-		local r = rng:NextNumber(110, 190)
-		local c = O + V(math.cos(a) * dist, -r * 0.55, math.sin(a) * dist)
+	for k = 1, 46 do
+		local a = k / 46 * math.pi * 2 + rng:NextNumber(-0.06, 0.06)
+		local dist = rng:NextNumber(RAD + 520, size / 2 - 220)
+		local r = rng:NextNumber(120, 240)
+		local c = O + V(math.cos(a) * dist, -r * 0.5, math.sin(a) * dist)
 		safe(function()
 			terrain:FillBall(c, r, M.Grass)
 		end)
 		if k % 3 == 0 then
 			safe(function()
-				terrain:FillBall(c + V(0, r * 0.35, 0), r * 0.55, M.Rock)
+				terrain:FillBall(c + V(0, r * 0.3, 0), r * 0.6, M.Rock)
 			end)
 		end
 	end
@@ -397,64 +356,75 @@ function World.BuildTerrain(O)
 			clouds.Parent = terrain
 		end
 		terrain.WaterColor = RGB(40, 100, 115)
-		terrain.WaterTransparency = 0.5
+		terrain.WaterTransparency = 0.45
 		terrain.WaterWaveSize = 0.12
 		terrain.WaterReflectance = 0.7
 	end)
 end
 
--- поверхность воды из деталей: видна, даже если вода рельефа не появилась
-function World.BuildWaterSurface(parent, O)
-	local m = Instance.new("Model")
-	m.Name = "WaterSurface"
-	local water = RGB(45, 110, 125)
-	local function props()
-		return { Shape = Enum.PartType.Cylinder, CanCollide = false, CanQuery = false, Transparency = 0.45, Reflectance = 0.2, CastShadow = false }
+-- трава поляны и озеро (озеро каждый раз в своей четверти поляны)
+function World.BuildClearingTerrain(O, lake)
+	local terrain = workspace.Terrain
+	local E = CLEAR_HALF
+	safe(function()
+		terrain:FillBlock(CFrame.new(O + V(0, -6, 0)), V(E * 2, 12, E * 2), M.Grass)
+	end)
+	safe(function()
+		terrain:FillBlock(CFrame.new(O + V(0, 4, 0)), V(E * 2, 8, E * 2), M.Air)
+	end)
+	if lake then
+		safe(function()
+			terrain:FillCylinder(CFrame.new(lake + V(0, -2, 0)), 4, SAND_R, M.Sand)
+		end)
+		safe(function()
+			terrain:FillCylinder(CFrame.new(lake + V(0, 1, 0)), 6, LAKE_R, M.Air)
+		end)
+		safe(function()
+			terrain:FillCylinder(CFrame.new(lake + V(0, -6, 0)), 10, LAKE_R, M.Water)
+		end)
 	end
-	Parts.box(m, "Lake", CFrame.new(O + LAKE + V(0, -0.5, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.2, LAKE_R * 2 - 2, LAKE_R * 2 - 2), water, M.Glass, props())
-	for k = 1, #RIVER - 1 do
-		local a, b = O + RIVER[k], O + RIVER[k + 1]
-		local mid = (a + b) / 2
-		Parts.box(m, "River", CFrame.lookAt(mid, mid + (b - a)) * CFrame.new(0, -0.55, 0), V(15, 0.2, (b - a).Magnitude - 15), water, M.Glass, {
-			CanCollide = false,
-			CanQuery = false,
-			Transparency = 0.45,
-			Reflectance = 0.2,
-			CastShadow = false,
-		})
-	end
-	for k = 2, #RIVER do
-		Parts.box(m, "RiverBend", CFrame.new(O + RIVER[k] + V(0, -0.6, 0)) * CFrame.Angles(0, 0, math.pi / 2), V(0.2, 15, 15), water, M.Glass, props())
-	end
-	m.Parent = parent
 end
 
--- лес вокруг всего лабиринта (виден с вертолёта)
-function World.BuildOuterForest(parent, O, seed)
+-- после игры пропасть у выхода снова засыпаем
+function World.ClearTerrain(O, pit)
+	local _ = O
+	if pit then
+		safe(function()
+			workspace.Terrain:FillBlock(pit.cf * CFrame.new(0, -2, 0), pit.size - V(0, 4, 0), M.Grass)
+		end)
+	end
+end
+
+-- лес вокруг всего лабиринта, до самых холмов
+function World.BuildOuterForest(parent, O, seed, avoid)
 	local m = Instance.new("Model")
 	m.Name = "OuterForest"
 	local rng = Random.new(seed + 5)
-	local far = HALF + 900
+	local far = RAD + 1100
 	local placed, tries = 0, 0
-	while placed < 900 and tries < 8000 do
+	while placed < 1100 and tries < 9000 do
 		tries += 1
-		-- больше деревьев ближе к стенам, реже вдали
-		local r = HALF + 24 + (rng:NextNumber() ^ 1.6) * (far - HALF - 24)
+		local r = RAD + 30 + (rng:NextNumber() ^ 1.5) * (far - RAD - 30)
 		local a = rng:NextNumber(0, math.pi * 2)
-		local x, z = math.cos(a) * r * 1.15, math.sin(a) * r * 1.15
-		if math.max(math.abs(x), math.abs(z)) > HALF + 22 and math.max(math.abs(x), math.abs(z)) < Config.SlotSpacing / 2 - 80 then
+		local p = O + V(math.cos(a) * r, 0, math.sin(a) * r)
+		local blocked = false
+		for _, z in ipairs(avoid or {}) do
+			local lp = z.cf:PointToObjectSpace(p)
+			if math.abs(lp.X) < z.size.X / 2 and math.abs(lp.Z) < z.size.Z / 2 then
+				blocked = true
+			end
+		end
+		if not blocked then
 			placed += 1
-			local p = O + V(x, 0, z)
-			local h = rng:NextNumber(30, 54)
-			local leaf = RGB(rng:NextInteger(30, 52), rng:NextInteger(74, 108), rng:NextInteger(34, 50))
+			local h = rng:NextNumber(30, 56)
 			local s1 = rng:NextNumber(16, 24)
 			Parts.box(m, "Trunk", CFrame.new(p + V(0, h / 2, 0)), V(3, h, 3), RGB(78, 56, 38), M.Wood)
 			if rng:NextNumber() < 0.4 then
-				-- ель
 				Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.62, 0)), V(s1 * 1.1, h * 0.75, s1 * 1.1), RGB(28, 66, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
 			else
+				local leaf = RGB(rng:NextInteger(30, 52), rng:NextInteger(74, 108), rng:NextInteger(34, 50))
 				Parts.box(m, "Crown", CFrame.new(p + V(0, h * 0.75, 0)), V(s1, s1 * 0.85, s1), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
-				if r < HALF + 300 then
+				if r < RAD + 300 then
 					Parts.box(m, "Crown", CFrame.new(p + V(rng:NextNumber(-3, 3), h * 0.95, rng:NextNumber(-3, 3))), V(s1 * 0.7, s1 * 0.6, s1 * 0.7), leaf, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
 				end
 			end
@@ -462,9 +432,6 @@ function World.BuildOuterForest(parent, O, seed)
 	end
 	m.Parent = parent
 end
-
--- рельеф у каждого места одинаковый, поэтому его не стираем, а строим один раз
-function World.ClearTerrain(_) end
 
 ------------------------------------------------------------------
 -- Записки прошлых выживших и заброшенные лагеря
@@ -546,6 +513,22 @@ end
 ------------------------------------------------------------------
 -- Поляна
 ------------------------------------------------------------------
+local function mine(parent, center, facing, kinds, rng, nodes)
+	local b = CFrame.lookAt(center, center + facing)
+	local beam = RGB(80, 58, 36)
+	for _, x in ipairs({ -10, 10 }) do
+		Parts.box(parent, "MineSupport", b * CFrame.new(x, 7, -11), V(1.4, 14, 1.4), beam, M.Wood)
+	end
+	Parts.box(parent, "MineBeam", b * CFrame.new(0, 14.5, -11), V(21.5, 1.4, 1.4), beam, M.Wood)
+	local lantern = Parts.box(parent, "MineLantern", b * CFrame.new(0, 13, -11), V(0.9, 1.3, 0.9), RGB(255, 170, 80), M.Neon)
+	Parts.light(lantern, 30, 1.3, RGB(255, 170, 90), true)
+	Parts.box(parent, "MineCart", b * CFrame.new(8, 1.2, 5), V(3.4, 2.2, 5), RGB(80, 70, 60), M.CorrodedMetal)
+	for k, kind in ipairs(kinds) do
+		local off = ({ V(-7, 0, 2), V(5, 0, -3), V(-3, 0, 8), V(7, 0, 9) })[k]
+		table.insert(nodes, node(parent, kind, (b * CFrame.new(off)).Position, rng))
+	end
+end
+
 function World.BuildClearing(parent, seed, O)
 	local m = Instance.new("Model")
 	m.Name = "Clearing"
@@ -553,32 +536,9 @@ function World.BuildClearing(parent, seed, O)
 	local refs = { model = m, nodes = {} }
 	local E = CLEAR_HALF
 
-	-- горбатый мост через реку на тропе к северным воротам (река там на z ≈ -84)
-	local bz = -84
-	local deck = { { -22, -12, 0.5, 2.2 }, { -12, -6, 2.2, 3.4 }, { -6, 6, 3.4, 3.4 }, { 6, 12, 3.4, 2.2 }, { 12, 22, 2.2, 0.5 } }
-	for _, d in ipairs(deck) do
-		local a, b = O + V(0, d[3], bz + d[1]), O + V(0, d[4], bz + d[2])
-		local mid = (a + b) / 2
-		local len = (b - a).Magnitude + 0.4
-		local cf = CFrame.lookAt(mid, b)
-		Parts.box(m, "Bridge", cf * CFrame.new(0, -0.35, 0), V(9, 0.7, len), WOOD, M.WoodPlanks)
-		for _, x in ipairs({ -4.4, 4.4 }) do
-			Parts.box(m, "BridgeRail", cf * CFrame.new(x, 2.6, 0), V(0.4, 0.4, len), RGB(70, 48, 30), M.Wood)
-			Parts.box(m, "BridgePost", cf * CFrame.new(x, 1.2, -len / 2 + 0.3), V(0.5, 3.2, 0.5), RGB(70, 48, 30), M.Wood)
-		end
-	end
-	for _, z in ipairs({ -9, 9 }) do
-		for _, x in ipairs({ -3.5, 3.5 }) do
-			Parts.box(m, "BridgePile", CFrame.new(O + V(x, -3, bz + z)), V(1, 12, 1), RGB(60, 42, 28), M.Wood)
-		end
-	end
-	-- тропинки от лифта к четырём воротам (через реку — по мосту)
-	Parts.span(m, "Path", O, V(-3.5, 0, bz + 22), V(3.5, 0.06, E - 2), RGB(120, 100, 70), M.Ground)
-	Parts.span(m, "Path", O, V(-3.5, 0, -E + 2), V(3.5, 0.06, bz - 22), RGB(120, 100, 70), M.Ground)
+	-- тропинки от лифта к четырём воротам
+	Parts.span(m, "Path", O, V(-3.5, 0, -E + 2), V(3.5, 0.06, E - 2), RGB(120, 100, 70), M.Ground)
 	Parts.span(m, "Path", O, V(-E + 2, 0, -3.5), V(E - 2, 0.06, 3.5), RGB(120, 100, 70), M.Ground)
-	-- деревянный причал на озере
-	local dock = O + LAKE + V(52, 0, 40)
-	Parts.box(m, "Dock", CFrame.lookAt(dock + V(0, 0.6, 0), O + LAKE + V(0, 0.6, 0)) * CFrame.new(0, 0, -8), V(6, 0.6, 26), WOOD, M.WoodPlanks)
 
 	-- лифт в центре поляны
 	local e = O
@@ -601,105 +561,151 @@ function World.BuildClearing(parent, seed, O)
 	grate.Parent = m
 	refs.grate = grate
 	refs.grateClosed = grate:GetPivot()
-	refs.liftSpawn = CFrame.lookAt(e + V(0, 3.5, 2), e + V(0, 3.5, -30))
+	refs.liftSpawn = CFrame.lookAt(e + V(0, 3.5, 0), e + V(0, 3.5, -30))
 	refs.liftPos = e
 
-	-- ящик с припасами у лифта
-	local crate = Parts.span(m, "SupplyCrate", O, V(-20, 0, -16), V(-14, 3.5, -11), RGB(120, 95, 60), M.WoodPlanks)
-	refs.supplyPrompt = prompt(crate, "Взять припасы", "Начальные ресурсы", 0, 10)
-	note(m, CFrame.new(O + V(-17, 3.6, -13.5)), rng, 9)
-
-	-- костёр с брёвнами вокруг
-	local fc = O + V(34, 0, 34)
-	local fireBase = Parts.box(m, "Campfire", CFrame.new(fc + V(0, 0.3, 0)), V(4, 0.6, 4), RGB(50, 34, 26), M.Slate)
-	local fire = Instance.new("Fire")
-	fire.Size = 6
-	fire.Heat = 9
-	fire.Parent = fireBase
-	Parts.light(fireBase, 40, 1.5, RGB(255, 150, 70), true)
-	for k = 0, 5 do
-		local a = k / 6 * math.pi * 2
-		Parts.box(m, "Log", CFrame.new(fc + V(math.cos(a) * 6, 0.8, math.sin(a) * 6)) * CFrame.Angles(0, -a, 0) * CFrame.Angles(0, 0, math.pi / 2), V(1.6, 4.5, 1.6), WOOD, M.Wood, { Shape = Enum.PartType.Cylinder })
+	-- припасы прямо в лифте: ящик, бочка, мешки
+	local crate = Parts.span(m, "SupplyCrate", O, V(-8.6, 0.6, 3.6), V(-5.6, 4, 8.4), RGB(120, 95, 60), M.WoodPlanks)
+	for _, y in ipairs({ 1.2, 3.4 }) do
+		Parts.span(m, "CrateBand", O, V(-8.7, y, 3.5), V(-5.5, y + 0.3, 8.5), RGB(60, 60, 64), M.Metal, NOCOLLIDE)
 	end
+	refs.supplyPrompt = prompt(crate, "Взять припасы", "Припасы в лифте", 0, 10)
+	note(m, CFrame.new(O + V(-7, 4.1, 6)), rng, 9)
+	Parts.box(m, "Barrel", CFrame.new(O + V(6.5, 2.4, 6.5)), V(3.6, 3.6, 3.6), RGB(90, 70, 50), M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+	Parts.box(m, "Sack", CFrame.new(O + V(6.8, 1.3, 2.5)) * CFrame.Angles(0, 0.4, 0), V(2.4, 1.4, 1.8), RGB(170, 150, 110), M.Fabric)
+	Parts.box(m, "Sack", CFrame.new(O + V(7.2, 1.3, -2.5)) * CFrame.Angles(0, -0.3, 0), V(2.4, 1.4, 1.8), RGB(160, 140, 105), M.Fabric)
 
-	local function freeSpot(minRiver)
-		for _ = 1, 60 do
-			local p = V(rng:NextNumber(-E + 10, E - 10), 0, rng:NextNumber(-E + 10, E - 10))
-			local ok = distToWater(p) > (minRiver or 14)
-				and math.abs(p.X) > 8
-				and math.abs(p.Z) > 8
-				and p.Magnitude > 30
-				and (p - V(34, 0, 34)).Magnitude > 14
+	-- поляна делится на 4 четверти, в каждой своё (порядок случайный)
+	local kinds = { "lake", "forest", "mine", "meadow" }
+	for k = #kinds, 2, -1 do
+		local j = rng:NextInteger(1, k)
+		kinds[k], kinds[j] = kinds[j], kinds[k]
+	end
+	local quads = { V(-1, 0, -1), V(1, 0, -1), V(-1, 0, 1), V(1, 0, 1) }
+	local QC = E / 2
+	local lakeC
+	refs.quadrants = {}
+	-- случайная точка внутри четверти (не на тропинках, не у лифта)
+	local function spotIn(q, margin, avoid)
+		for _ = 1, 80 do
+			local p = V(q.X * rng:NextNumber(14, E - margin), 0, q.Z * rng:NextNumber(14, E - margin))
+			local ok = true
+			if lakeC and (O + p - lakeC).Magnitude < SAND_R + 6 then
+				ok = false
+			end
+			for _, a in ipairs(avoid or {}) do
+				if (p - a.p).Magnitude < a.r then
+					ok = false
+				end
+			end
 			if ok then
 				return O + p
 			end
 		end
-		return O + V(rng:NextNumber(-E + 10, E - 10), 0, -E + 14)
+		return O + V(q.X * QC, 0, q.Z * QC)
 	end
-	-- деревья растут одной большой рощей (юго-восток поляны) и отрастают после вырубки
-	local GROVE, GR = V(118, 0, 118), 78
-	local grove = {}
-	for _ = 1, 900 do
-		if #grove >= 110 then
-			break
-		end
-		local ang, rr = rng:NextNumber(0, math.pi * 2), GR * math.sqrt(rng:NextNumber())
-		local p = GROVE + V(math.cos(ang) * rr, 0, math.sin(ang) * rr)
-		local ok = math.abs(p.X) < E - 8 and math.abs(p.Z) < E - 8 and math.abs(p.X) > 8 and math.abs(p.Z) > 8 and (p - V(34, 0, 34)).Magnitude > 16
-		for _, q in ipairs(grove) do
-			if (q - p).Magnitude < 8.5 then
-				ok = false
-				break
+	for k, kind in ipairs(kinds) do
+		local q = quads[k]
+		local qc = O + q * QC
+		refs.quadrants[kind] = qc
+		if kind == "lake" then
+			lakeC = qc + V(-q.X * 4, 0, -q.Z * 4)
+			refs.lakeCenter = lakeC
+			-- причал к центру озера
+			local dock = lakeC - q * 50
+			Parts.box(m, "Dock", CFrame.lookAt(dock + V(0, 0.6, 0), lakeC + V(0, 0.6, 0)) * CFrame.new(0, 0, -6), V(6, 0.6, 24), WOOD, M.WoodPlanks)
+			for _, x in ipairs({ -2.6, 2.6 }) do
+				for _, z in ipairs({ -2, -10, -17 }) do
+					Parts.box(m, "DockPost", CFrame.lookAt(dock, lakeC) * CFrame.new(x, -1, z), V(0.8, 4, 0.8), RGB(70, 50, 34), M.Wood)
+				end
+			end
+			-- камыш и трава по берегу (из неё — бинты)
+			for _ = 1, 14 do
+				local a = rng:NextNumber(0, math.pi * 2)
+				local p = lakeC + V(math.cos(a), 0, math.sin(a)) * rng:NextNumber(LAKE_R + 3, SAND_R + 6)
+				if math.abs(p.X - O.X) < E - 6 and math.abs(p.Z - O.Z) < E - 6 then
+					local base = Parts.box(m, "TallGrass", CFrame.new(p + V(0, 1.4, 0)), V(2.6, 2.8, 2.6), RGB(110, 140, 70), M.Grass, NOCOLLIDE)
+					base.Transparency = 0.2
+					tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
+				end
+			end
+		elseif kind == "forest" then
+			-- густая роща: деревья отрастают после вырубки
+			local placedT = {}
+			for _ = 1, 700 do
+				if #placedT >= 95 then
+					break
+				end
+				local p = spotIn(q, 8)
+				local ok = true
+				for _, t in ipairs(placedT) do
+					if (t - p).Magnitude < 8.5 then
+						ok = false
+						break
+					end
+				end
+				if ok then
+					table.insert(placedT, p)
+					table.insert(refs.nodes, node(m, "tree", p, rng))
+				end
+			end
+		elseif kind == "mine" then
+			-- скалы, вход в шахту и много камня с железом
+			for _ = 1, 14 do
+				local p = spotIn(q, 16)
+				local sz = rng:NextNumber(8, 20)
+				Parts.box(m, "Cliff", CFrame.new(p + V(0, sz * 0.3, 0)) * CFrame.Angles(rng:NextNumber(-0.3, 0.3), rng:NextNumber(0, 6), rng:NextNumber(-0.3, 0.3)), V(sz, sz * 0.8, sz * 0.9), RGB(98, 96, 92), M.Slate)
+			end
+			mine(m, qc, ((O - qc) * V(1, 0, 1)).Unit, { "stone", "stone", "iron", "iron" }, rng, refs.nodes)
+			for k2 = 1, 16 do
+				table.insert(refs.nodes, node(m, k2 % 4 == 0 and "iron" or "stone", spotIn(q, 10, { { p = qc - O, r = 18 } }), rng))
+			end
+		else
+			-- луг: костёр с брёвнами, ягоды, высокая трава, цветы
+			local fc = qc
+			local fireBase = Parts.box(m, "Campfire", CFrame.new(fc + V(0, 0.3, 0)), V(4, 0.6, 4), RGB(50, 34, 26), M.Slate)
+			local fire = Instance.new("Fire")
+			fire.Size = 6
+			fire.Heat = 9
+			fire.Parent = fireBase
+			Parts.light(fireBase, 40, 1.5, RGB(255, 150, 70), true)
+			for k2 = 0, 5 do
+				local a = k2 / 6 * math.pi * 2
+				Parts.box(m, "Log", CFrame.new(fc + V(math.cos(a) * 6, 0.8, math.sin(a) * 6)) * CFrame.Angles(0, -a, 0) * CFrame.Angles(0, 0, math.pi / 2), V(1.6, 4.5, 1.6), WOOD, M.Wood, { Shape = Enum.PartType.Cylinder })
+			end
+			local avoidFire = { { p = fc - O, r = 12 } }
+			for _ = 1, 22 do
+				local p = spotIn(q, 10, avoidFire)
+				local bush = Parts.box(m, "BerryBush", CFrame.new(p + V(0, 1.8, 0)), V(5, 3.8, 5), RGB(46, 84, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball })
+				for _ = 1, 7 do
+					Parts.box(m, "Berry", CFrame.new(p + V(rng:NextNumber(-2, 2), rng:NextNumber(1.2, 3.4), rng:NextNumber(-2, 2))), V(0.55, 0.55, 0.55), RGB(200, 30, 50), M.SmoothPlastic, {
+						Shape = Enum.PartType.Ball,
+						CanCollide = false,
+					})
+				end
+				tag(prompt(bush, "Собрать ягоды", "Куст", 0.5, 10), "BerryPrompt")
+			end
+			for _ = 1, 20 do
+				local p = spotIn(q, 8, avoidFire)
+				local base = Parts.box(m, "TallGrass", CFrame.new(p + V(0, 1.4, 0)), V(2.6, 2.8, 2.6), RGB(110, 140, 70), M.Grass, NOCOLLIDE)
+				base.Transparency = 0.2
+				for _ = 1, 5 do
+					Parts.box(m, "Blade", CFrame.new(p + V(rng:NextNumber(-1.2, 1.2), 1.8, rng:NextNumber(-1.2, 1.2))) * CFrame.Angles(rng:NextNumber(-0.2, 0.2), 0, rng:NextNumber(-0.2, 0.2)), V(0.2, 3.6, 0.2), RGB(120, 150, 70), M.Grass, NOCOLLIDE)
+				end
+				tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
+			end
+			for _ = 1, 120 do
+				local p = spotIn(q, 4)
+				local c = ({ RGB(230, 210, 80), RGB(200, 80, 120), RGB(240, 240, 240), RGB(150, 120, 230) })[rng:NextInteger(1, 4)]
+				Parts.box(m, "Flower", CFrame.new(p + V(0, 0.4, 0)), V(0.7, 0.3, 0.7), c, M.SmoothPlastic, NOCOLLIDE)
 			end
 		end
-		if ok then
-			table.insert(grove, p)
-			table.insert(refs.nodes, node(m, "tree", O + p, rng))
-		end
 	end
-	for _ = 1, 12 do
-		table.insert(refs.nodes, node(m, "tree", freeSpot(18), rng))
-	end
-	for _ = 1, 16 do
-		table.insert(refs.nodes, node(m, "stone", freeSpot(10), rng))
-	end
-	for _ = 1, 20 do
-		local p = freeSpot(10)
-		local bush = Parts.box(m, "BerryBush", CFrame.new(p + V(0, 1.8, 0)), V(5, 3.8, 5), RGB(46, 84, 40), M.LeafyGrass, { Shape = Enum.PartType.Ball })
-		for _ = 1, 7 do
-			Parts.box(m, "Berry", CFrame.new(p + V(rng:NextNumber(-2, 2), rng:NextNumber(1.2, 3.4), rng:NextNumber(-2, 2))), V(0.55, 0.55, 0.55), RGB(200, 30, 50), M.SmoothPlastic, {
-				Shape = Enum.PartType.Ball,
-				CanCollide = false,
-			})
-		end
-		tag(prompt(bush, "Собрать ягоды", "Куст", 0.5, 10), "BerryPrompt")
-	end
-	-- высокая трава у реки (из неё делаются бинты и верёвки)
-	for _ = 1, 26 do
-		local p
-		for _ = 1, 40 do
-			local cand = V(rng:NextNumber(-E + 8, E - 8), 0, rng:NextNumber(-E + 8, E - 8))
-			local d = distToWater(cand)
-			if d > 18 and d < 30 and math.abs(cand.X) > 7 then
-				p = O + cand
-				break
-			end
-		end
-		if p then
-			local base = Parts.box(m, "TallGrass", CFrame.new(p + V(0, 1.4, 0)), V(2.6, 2.8, 2.6), RGB(110, 140, 70), M.Grass, NOCOLLIDE)
-			base.Transparency = 0.2
-			for _ = 1, 6 do
-				Parts.box(m, "Blade", CFrame.new(p + V(rng:NextNumber(-1.2, 1.2), 1.8, rng:NextNumber(-1.2, 1.2))) * CFrame.Angles(rng:NextNumber(-0.2, 0.2), 0, rng:NextNumber(-0.2, 0.2)), V(0.2, 3.6, 0.2), RGB(120, 150, 70), M.Grass, NOCOLLIDE)
-			end
-			tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
-		end
-	end
-	-- цветы
-	for _ = 1, 160 do
-		local p = V(rng:NextNumber(-E + 4, E - 4), 0, rng:NextNumber(-E + 4, E - 4))
-		if distToWater(p) > 20 then
-			local c = ({ RGB(230, 210, 80), RGB(200, 80, 120), RGB(240, 240, 240), RGB(150, 120, 230) })[rng:NextInteger(1, 4)]
-			Parts.box(m, "Flower", CFrame.new(O + p + V(0, 0.4, 0)), V(0.7, 0.3, 0.7), c, M.SmoothPlastic, NOCOLLIDE)
+	-- немного деревьев и камней у стен по всей поляне
+	for _ = 1, 10 do
+		local q = quads[rng:NextInteger(1, 4)]
+		if refs.quadrants.lake ~= O + q * QC then
+			table.insert(refs.nodes, node(m, "stone", spotIn(q, 8), rng))
 		end
 	end
 
@@ -786,9 +792,7 @@ local function generate(rng)
 	for i = 0, N - 1 do
 		openE[i], openS[i], visited[i] = {}, {}, {}
 	end
-	local function valid(i, j)
-		return i >= 0 and j >= 0 and i < N and j < N and not inClearing(i, j)
-	end
+	local valid = inMaze
 	local function link(a, b, c, d)
 		if a == c then
 			openS[a][math.min(b, d)] = true
@@ -877,28 +881,43 @@ local function chest(parent, pos, facing, golden)
 	return { model = m, lid = lid, prompt = p, base = b }
 end
 
-local function mine(parent, center, facing, kinds, rng, nodes)
-	local b = CFrame.lookAt(center, center + facing)
-	local beam = RGB(80, 58, 36)
-	for _, x in ipairs({ -10, 10 }) do
-		Parts.box(parent, "MineSupport", b * CFrame.new(x, 7, -11), V(1.4, 14, 1.4), beam, M.Wood)
+-- выход: клетка на краю круга, от которой наружу прямой свободный «коридор»
+local function exitCandidates()
+	local list = {}
+	for i = 0, N - 1 do
+		for j = 0, N - 1 do
+			if inMaze(i, j) then
+				for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+					local clear = true
+					for k = 1, 12 do
+						for l = -3, 3 do
+							local ci = i + d[1] * k + (d[1] == 0 and l or 0)
+							local cj = j + d[2] * k + (d[2] == 0 and l or 0)
+							if inMaze(ci, cj) then
+								clear = false
+							end
+						end
+					end
+					if clear and not inMaze(i + d[1], j + d[2]) then
+						table.insert(list, { i = i, j = j, di = d[1], dj = d[2] })
+					end
+				end
+			end
+		end
 	end
-	Parts.box(parent, "MineBeam", b * CFrame.new(0, 14.5, -11), V(21.5, 1.4, 1.4), beam, M.Wood)
-	local lantern = Parts.box(parent, "MineLantern", b * CFrame.new(0, 13, -11), V(0.9, 1.3, 0.9), RGB(255, 170, 80), M.Neon)
-	Parts.light(lantern, 30, 1.3, RGB(255, 170, 90), true)
-	Parts.box(parent, "MineCart", b * CFrame.new(8, 1.2, 5), V(3.4, 2.2, 5), RGB(80, 70, 60), M.CorrodedMetal)
-	for k, kind in ipairs(kinds) do
-		local off = ({ V(-7, 0, 2), V(5, 0, -3), V(-3, 0, 8), V(7, 0, 9) })[k]
-		table.insert(nodes, node(parent, kind, (b * CFrame.new(off)).Position, rng))
-	end
+	return list
 end
 
-function World.BuildMaze(parent, seed, O)
+-- Стены лабиринта и всё внутри. Каждую ночь строится заново (другие коридоры,
+-- другие сундуки и шахты), но выход остаётся на месте.
+-- fixed: { exit = {i,j,di,dj}, keyTaken, mapFound }
+function World.BuildMazeLayout(parent, seed, O, fixed)
+	fixed = fixed or {}
 	local rng = Random.new(seed)
 	local m = Instance.new("Model")
 	m.Name = "Maze"
 	local openE, openS, valid = generate(rng)
-	local refs = { model = m, nodes = {}, chests = {}, cells = {}, reeds = {} }
+	local refs = { model = m, nodes = {}, chests = {}, cells = {}, mapWalls = {} }
 	local H, T = MZ.WallHeight, MZ.WallThickness
 
 	for i = 0, N - 1 do
@@ -909,15 +928,15 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	-- расстояния от ворот
+	-- расстояния от ворот поляны
 	local dist = {}
 	for i = 0, N - 1 do
 		dist[i] = {}
 	end
 	local queue = {}
-	for _, s in ipairs({ { MID, CLEAR_LO - 1 }, { MID, CLEAR_HI + 1 }, { CLEAR_LO - 1, MID }, { CLEAR_HI + 1, MID } }) do
-		dist[s[1]][s[2]] = 0
-		table.insert(queue, s)
+	for _, st in ipairs({ { MID, CLEAR_LO - 1 }, { MID, CLEAR_HI + 1 }, { CLEAR_LO - 1, MID }, { CLEAR_HI + 1, MID } }) do
+		dist[st[1]][st[2]] = 0
+		table.insert(queue, st)
 	end
 	local head = 1
 	while head <= #queue do
@@ -931,22 +950,26 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	local exitCell, exitD = nil, -1
-	for i = 0, N - 1 do
-		for j = 0, N - 1 do
-			if (i == 0 or j == 0 or i == N - 1 or j == N - 1) and dist[i][j] and dist[i][j] > exitD then
-				exitCell, exitD = { i, j }, dist[i][j]
+	-- выход выбирается один раз — самый дальний подходящий
+	local ex = fixed.exit
+	if not ex then
+		local best = -1
+		for _, c in ipairs(exitCandidates()) do
+			local d = dist[c.i][c.j] or 0
+			if d > best then
+				ex, best = c, d
 			end
 		end
 	end
+	refs.exit = ex
 
-	-- щели: случайные внутренние стены между двумя клетками лабиринта
+	-- щели
 	local crackS, crackE = {}, {}
 	for i = 0, N - 1 do
 		crackS[i], crackE[i] = {}, {}
 	end
 	local placed, tries = 0, 0
-	while placed < MZ.Cracks and tries < 2000 do
+	while placed < MZ.Cracks and tries < 3000 do
 		tries += 1
 		local i, j = rng:NextInteger(1, N - 3), rng:NextInteger(1, N - 3)
 		if rng:NextNumber() < 0.5 then
@@ -960,40 +983,40 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	local function ivy(axis, fixed, a, b)
+	local function ivy(axis, fixedC, a, b)
 		if rng:NextNumber() < 0.5 then
 			local len = math.min(b - a, rng:NextNumber(8, 22))
 			local cpos = rng:NextNumber(a + len / 2, b - len / 2)
 			local hgt = rng:NextNumber(12, 40)
 			local side = rng:NextNumber() < 0.5 and -1 or 1
 			if axis == "X" then
-				Parts.span(m, "Ivy", O, V(cpos - len / 2, H - hgt, fixed + side * (T / 2) - 0.2), V(cpos + len / 2, H, fixed + side * (T / 2) + 0.2), IVY, M.LeafyGrass, NOCOLLIDE)
+				Parts.span(m, "Ivy", O, V(cpos - len / 2, H - hgt, fixedC + side * (T / 2) - 0.2), V(cpos + len / 2, H, fixedC + side * (T / 2) + 0.2), IVY, M.LeafyGrass, NOCOLLIDE)
 			else
-				Parts.span(m, "Ivy", O, V(fixed + side * (T / 2) - 0.2, H - hgt, cpos - len / 2), V(fixed + side * (T / 2) + 0.2, H, cpos + len / 2), IVY, M.LeafyGrass, NOCOLLIDE)
+				Parts.span(m, "Ivy", O, V(fixedC + side * (T / 2) - 0.2, H - hgt, cpos - len / 2), V(fixedC + side * (T / 2) + 0.2, H, cpos + len / 2), IVY, M.LeafyGrass, NOCOLLIDE)
 			end
 		end
 	end
 
-	local function wallRun(axis, fixed, from, to)
+	local function wallRun(axis, fixedC, from, to)
 		local a, b = from - T / 2, to + T / 2
 		if axis == "X" then
-			Parts.span(m, "MazeWall", O, V(a, 0, fixed - T / 2), V(b, H, fixed + T / 2), WALL, M.Slate)
+			Parts.span(m, "MazeWall", O, V(a, 0, fixedC - T / 2), V(b, H, fixedC + T / 2), WALL, M.Slate)
 		else
-			Parts.span(m, "MazeWall", O, V(fixed - T / 2, 0, a), V(fixed + T / 2, H, b), WALL, M.Slate)
+			Parts.span(m, "MazeWall", O, V(fixedC - T / 2, 0, a), V(fixedC + T / 2, H, b), WALL, M.Slate)
 		end
-		ivy(axis, fixed, a, b)
+		table.insert(refs.mapWalls, { axis, fixedC, a, b, 0 })
+		ivy(axis, fixedC, a, b)
 	end
 
-	-- стена со щелью: узкий проём 6 шириной, снизу 4 высотой; выше 4..9 — «крышка»,
-	-- сквозь которую проходит только пригнувшийся игрок (группа столкновений CrawlCover)
-	local function crackWall(axis, fixed, from, to)
+	-- стена со щелью (пролезть только пригнувшись)
+	local function crackWall(axis, fixedC, from, to)
 		local mid = (from + to) / 2
 		local function seg(a, b, y0, y1, name, group)
 			local p
 			if axis == "X" then
-				p = Parts.span(m, name, O, V(a, y0, fixed - T / 2), V(b, y1, fixed + T / 2), WALL, M.Slate)
+				p = Parts.span(m, name, O, V(a, y0, fixedC - T / 2), V(b, y1, fixedC + T / 2), WALL, M.Slate)
 			else
-				p = Parts.span(m, name, O, V(fixed - T / 2, y0, a), V(fixed + T / 2, y1, b), WALL, M.Slate)
+				p = Parts.span(m, name, O, V(fixedC - T / 2, y0, a), V(fixedC + T / 2, y1, b), WALL, M.Slate)
 			end
 			if group then
 				p.CollisionGroup = group
@@ -1004,36 +1027,42 @@ function World.BuildMaze(parent, seed, O)
 		seg(mid + 3, to + T / 2, 0, H, "MazeWall")
 		seg(mid - 3, mid + 3, 9, H, "MazeWall")
 		seg(mid - 3, mid + 3, 4, 9, "CrawlCover", "CrawlCover")
-		-- пролом: неровные камни по краю дыры с обеих сторон стены, мох и обломки на полу
+		table.insert(refs.mapWalls, { axis, fixedC, from - T / 2, to + T / 2, 1 })
 		for _, side in ipairs({ -1, 1 }) do
 			for k = 0, 6 do
 				local a = k / 6 * math.pi
 				local along = -math.cos(a) * 3.6
 				local up = math.sin(a) * 5.2
-				local face = fixed + side * (T / 2 + 0.25)
+				local face = fixedC + side * (T / 2 + 0.25)
 				local p = axis == "X" and V(mid + along, up, face) or V(face, up, mid + along)
 				Parts.box(m, "CrackStone", CFrame.new(O + p) * CFrame.Angles(0, 0, rng:NextNumber(-0.6, 0.6)), axis == "X" and V(rng:NextNumber(0.8, 1.2), rng:NextNumber(0.6, 0.9), 0.5) or V(0.5, rng:NextNumber(0.6, 0.9), rng:NextNumber(0.8, 1.2)), WALL, M.Slate, NOCOLLIDE)
 			end
-			local mp = axis == "X" and V(mid, 0.1, fixed + side * (T / 2 + 1.5)) or V(fixed + side * (T / 2 + 1.5), 0.1, mid)
+			local mp = axis == "X" and V(mid, 0.1, fixedC + side * (T / 2 + 1.5)) or V(fixedC + side * (T / 2 + 1.5), 0.1, mid)
 			Parts.box(m, "CrackMoss", CFrame.new(O + mp), axis == "X" and V(7, 0.2, 2.5) or V(2.5, 0.2, 7), IVY, M.LeafyGrass, NOCOLLIDE)
-			for _ = 1, 3 do
-				local off = rng:NextNumber(-6, 6)
-				local rp = axis == "X" and V(mid + off, 0.4, fixed + side * rng:NextNumber(3, 6)) or V(fixed + side * rng:NextNumber(3, 6), 0.4, mid + off)
-				Parts.box(m, "Rubble", CFrame.new(O + rp) * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), 0), V(1.2, 0.8, 1), WALL_DARK, M.Slate, NOCOLLIDE)
-			end
 		end
 	end
 
 	local function isExitWall(axis, line, k)
-		if not exitCell then
+		if not ex then
 			return false
 		end
-		local i, j = exitCell[1], exitCell[2]
-		if axis == "X" then
-			return k == i and ((line == -1 and j == 0) or (line == N - 1 and j == N - 1))
-		else
-			return k == j and ((line == -1 and i == 0) or (line == N - 1 and i == N - 1))
+		if axis == "X" and ex.dj ~= 0 then
+			return k == ex.i and line == (ex.dj > 0 and ex.j or ex.j - 1)
+		elseif axis == "Z" and ex.di ~= 0 then
+			return k == ex.j and line == (ex.di > 0 and ex.i or ex.i - 1)
 		end
+		return false
+	end
+
+	-- стена между клетками A и B есть, если хотя бы одна из них в лабиринте
+	local function edge(aIn, bIn, aClr, bClr, open, exitWall)
+		if aClr or bClr or exitWall then
+			return false, false
+		end
+		if aIn and bIn then
+			return not open, false
+		end
+		return aIn or bIn, false
 	end
 
 	for line = -1, N - 1 do
@@ -1042,14 +1071,10 @@ function World.BuildMaze(parent, seed, O)
 		for i = 0, N do
 			local present, crack = false, false
 			if i < N then
-				if line == -1 or line == N - 1 then
-					present = not isExitWall("X", line, i)
-				else
-					local cA, cB = inClearing(i, line), inClearing(i, line + 1)
-					present = not cA and not cB and not openS[i][line]
-					crack = present and crackS[i][line] == true
-					present = present and not crack
-				end
+				local aIn, bIn = valid(i, line), valid(i, line + 1)
+				present = edge(aIn, bIn, inClearing(i, line), inClearing(i, line + 1), openS[i] and openS[i][line], isExitWall("X", line, i))
+				crack = present and aIn and bIn and crackS[i] and crackS[i][line] == true
+				present = present and not crack
 			end
 			if present and not runStart then
 				runStart = i
@@ -1068,14 +1093,10 @@ function World.BuildMaze(parent, seed, O)
 		for j = 0, N do
 			local present, crack = false, false
 			if j < N then
-				if line == -1 or line == N - 1 then
-					present = not isExitWall("Z", line, j)
-				else
-					local cA, cB = inClearing(line, j), inClearing(line + 1, j)
-					present = not cA and not cB and not openE[line][j]
-					crack = present and crackE[line][j] == true
-					present = present and not crack
-				end
+				local aIn, bIn = valid(line, j), valid(line + 1, j)
+				present = edge(aIn, bIn, inClearing(line, j), inClearing(line + 1, j), openE[line] and openE[line][j], isExitWall("Z", line, j))
+				crack = present and aIn and bIn and crackE[line] and crackE[line][j] == true
+				present = present and not crack
 			end
 			if present and not runStart then
 				runStart = j
@@ -1093,7 +1114,7 @@ function World.BuildMaze(parent, seed, O)
 	local deadEnds = {}
 	for i = 0, N - 1 do
 		for j = 0, N - 1 do
-			if valid(i, j) and dist[i][j] and dist[i][j] > 2 and not (exitCell and exitCell[1] == i and exitCell[2] == j) then
+			if valid(i, j) and dist[i][j] and dist[i][j] > 2 and not (ex and ex.i == i and ex.j == j) then
 				local nb = neighbors(i, j, openE, openS, valid)
 				if #nb == 1 then
 					table.insert(deadEnds, { i = i, j = j, d = dist[i][j], to = cellPos(O, nb[1][1], nb[1][2]) })
@@ -1104,10 +1125,27 @@ function World.BuildMaze(parent, seed, O)
 	table.sort(deadEnds, function(a, b)
 		return a.d > b.d
 	end)
-	if deadEnds[1] then
+	-- золотой сундук с ключ-картой (пока ключ не найден)
+	if deadEnds[1] and not fixed.keyTaken then
 		local de = table.remove(deadEnds, 1)
 		local pos = cellPos(O, de.i, de.j)
 		table.insert(refs.chests, chest(m, pos, (de.to - pos).Unit, true))
+	end
+	-- карта лабиринта лежит на столе в тупике средней глубины
+	if not fixed.mapFound and #deadEnds > 4 then
+		local de = table.remove(deadEnds, math.floor(#deadEnds / 2))
+		local pos = cellPos(O, de.i, de.j)
+		local b = CFrame.lookAt(pos, pos + (de.to - pos).Unit)
+		Parts.box(m, "MapTable", b * CFrame.new(0, 1.6, 0), V(5, 0.4, 3), RGB(100, 72, 46), M.WoodPlanks)
+		for _, x in ipairs({ -2.1, 2.1 }) do
+			for _, z in ipairs({ -1.1, 1.1 }) do
+				Parts.box(m, "TableLeg", b * CFrame.new(x, 0.7, z), V(0.4, 1.4, 0.4), RGB(80, 58, 38), M.Wood)
+			end
+		end
+		local sheet = Parts.box(m, "MazeMap", b * CFrame.new(0, 1.85, 0) * CFrame.Angles(0, 0.2, 0), V(2.6, 0.06, 1.8), RGB(225, 210, 170), M.SmoothPlastic, NOCOLLIDE)
+		sheet.CanQuery = true
+		Parts.light(sheet, 12, 0.8, RGB(255, 230, 170), false)
+		tag(prompt(sheet, "Взять карту", "Карта лабиринта", 0.6, 9), "MapPrompt")
 	end
 	local far, near = {}, {}
 	for k, de in ipairs(deadEnds) do
@@ -1143,7 +1181,7 @@ function World.BuildMaze(parent, seed, O)
 		table.insert(refs.chests, c)
 	end
 
-	-- атмосфера: светящийся мох, кости, обломки, высокая трава в коридорах
+	-- атмосфера: светящийся мох, кости, обломки, высокая трава
 	for _ = 1, 90 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)]
 		local glow = Parts.box(m, "GlowMoss", CFrame.new(p + V(rng:NextNumber(-12, 12), 0.2, rng:NextNumber(-12, 12))), V(rng:NextNumber(1, 3), 0.3, rng:NextNumber(1, 3)), RGB(90, 255, 170), M.Neon, NOCOLLIDE)
@@ -1165,24 +1203,21 @@ function World.BuildMaze(parent, seed, O)
 		base.Transparency = 0.2
 		tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
 	end
-
-	-- лагеря прошлых выживших, ящики и записки
-	for k = 1, 8 do
+	for k = 1, 9 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)]
 		if (p - O).Magnitude > CLEAR_HALF + 60 then
 			camp(m, p, rng, k)
 		end
 	end
-	for _ = 1, 26 do
+	for _ = 1, 30 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-9, 9), 0, rng:NextNumber(-9, 9))
 		lootCrate(m, p, rng)
 	end
-	for k = 9, 16 do
+	for k = 10, 16 do
 		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-8, 8), 0.1, rng:NextNumber(-8, 8))
 		note(m, CFrame.new(p) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), rng, k)
 	end
-	-- заросли лиан: можно залезть внутрь и спрятаться от Скрежетников
-	for _ = 1, 26 do
+	for _ = 1, 28 do
 		local c = refs.cells[rng:NextInteger(1, #refs.cells)]
 		if (c - O).Magnitude > CLEAR_HALF + 40 then
 			local dir = ({ V(1, 0, 0), V(-1, 0, 0), V(0, 0, 1), V(0, 0, -1) })[rng:NextInteger(1, 4)]
@@ -1190,79 +1225,156 @@ function World.BuildMaze(parent, seed, O)
 		end
 	end
 
-	-- выход и вертолётная площадка за ним
-	if exitCell then
-		local i, j = exitCell[1], exitCell[2]
-		local inner = cellPos(O, i, j)
-		local out
-		if i == 0 then
-			out = V(-1, 0, 0)
-		elseif i == N - 1 then
-			out = V(1, 0, 0)
-		elseif j == 0 then
-			out = V(0, 0, -1)
-		else
-			out = V(0, 0, 1)
-		end
-		local mouth = inner + out * (C / 2)
-		local b = CFrame.lookAt(mouth, mouth + out)
-		for _, x in ipairs({ -C / 2, C / 2 }) do
-			Parts.box(m, "ExitWall", b * CFrame.new(x, H / 2, -25), V(T, H, 50), WALL_DARK, M.Slate)
-		end
-		Parts.box(m, "ExitFloor", b * CFrame.new(0, 0.2, -25), V(C, 0.4, 50), RGB(60, 60, 64), M.Concrete)
-		local door = Parts.box(m, "ExitDoor", b * CFrame.new(0, H / 2 - 4, -50), V(C, H - 8, 2), RGB(90, 95, 100), M.DiamondPlate)
-		for _, x in ipairs({ -10, 10 }) do
-			local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(x, H - 10, -48), V(1.8, 1.8, 1.8), RGB(120, 255, 160), M.Neon)
-			Parts.light(lamp, 40, 1.8, RGB(140, 255, 170), true)
-		end
-		local sign = Parts.box(m, "ExitSign", b * CFrame.new(0, H - 4, -48.8), V(18, 4, 0.3), RGB(20, 40, 25), M.SmoothPlastic)
-		local sg = Instance.new("SurfaceGui")
-		sg.Face = Enum.NormalId.Back
-		sg.PixelsPerStud = 25
-		sg.Parent = sign
-		local tl = Instance.new("TextLabel")
-		tl.Size = UDim2.fromScale(1, 1)
-		tl.BackgroundTransparency = 1
-		tl.Text = "ВЫХОД"
-		tl.Font = Enum.Font.GothamBlack
-		tl.TextScaled = true
-		tl.TextColor3 = RGB(140, 255, 170)
-		tl.Parent = sg
-		-- считыватель ключ-карты на стене у ворот (на уровне груди)
-		local reader = Parts.box(m, "CardReader", b * CFrame.new(C / 2 - T / 2 - 0.4, 4.8, -46) * CFrame.Angles(0, -math.pi / 2, 0), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
-		local readerLight = Parts.box(m, "ReaderLight", reader.CFrame * CFrame.new(0, 0.8, -0.3), V(0.5, 0.3, 0.1), RGB(255, 40, 40), M.Neon, NOCOLLIDE)
-		Parts.box(m, "ReaderSlot", reader.CFrame * CFrame.new(0, -0.2, -0.3), V(1, 0.12, 0.1), RGB(10, 10, 10), M.SmoothPlastic, NOCOLLIDE)
-		refs.readerLight = readerLight
+	m.Parent = parent
+	return refs
+end
 
-		-- снаружи: лесная поляна, где ждёт вертолёт
-		local pad = b * CFrame.new(0, 0, -95)
-		local frng = Random.new(seed + 99)
-		for _ = 1, 70 do
-			local a = frng:NextNumber(0, math.pi * 2)
-			local r = frng:NextNumber(34, 120)
-			local local2 = V(math.cos(a) * r, 0, math.sin(a) * r)
-			-- не ставим деревья на дорогу от ворот к поляне
-			local rel = pad * CFrame.new(local2)
-			local toMouth = (b:PointToObjectSpace(rel.Position))
-			if not (math.abs(toMouth.X) < 14 and toMouth.Z > -100 and toMouth.Z < 0) then
-				local h = frng:NextNumber(26, 40)
-				local tp = rel.Position
-				Parts.box(m, "ForestTrunk", CFrame.new(tp + V(0, h / 2, 0)), V(2.4, h, 2.4), RGB(80, 58, 40), M.Wood)
-				for k = 1, 4 do
-					local sz = frng:NextNumber(10, 15) * (1 - k * 0.12)
-					Parts.box(m, "ForestLeaves", CFrame.new(tp + V(frng:NextNumber(-2, 2), h * 0.6 + k * 3, frng:NextNumber(-2, 2))), V(sz, sz * 0.8, sz), RGB(40, frng:NextInteger(85, 110), 45), M.LeafyGrass, {
-						Shape = Enum.PartType.Ball,
-						CanCollide = false,
-					})
-				end
-			end
+------------------------------------------------------------------
+-- Выход: туннель → пропасть с мостом → лаборатория → вертолётная площадка.
+-- Строится один раз за игру (лабиринт меняется, а выход — нет).
+------------------------------------------------------------------
+function World.BuildExit(parent, O, ex)
+	local m = Instance.new("Model")
+	m.Name = "Exit"
+	local H, T = MZ.WallHeight, MZ.WallThickness
+	local inner = cellPos(O, ex.i, ex.j)
+	local out = V(ex.di, 0, ex.dj)
+	local mouth = inner + out * (C / 2)
+	local b = CFrame.lookAt(mouth, mouth + out) -- -Z смотрит наружу
+	local refs = { model = m, exitOut = b }
+	local CONC = RGB(120, 120, 118)
+	local W = C / 2
+
+	-- 1. туннель: одинаковые стены слева и справа, арки, фонари
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "TunnelWall", b * CFrame.new(sx * (W + T / 2), H / 2, -55), V(T, H, 110), WALL_DARK, M.Slate)
+		for d = 10, 100, 18 do
+			local lamp = Parts.box(m, "TunnelLamp", b * CFrame.new(sx * (W - 0.6), 12, -d), V(0.8, 1.6, 1.2), RGB(255, 200, 120), M.Neon)
+			Parts.light(lamp, 26, 1.2, RGB(255, 190, 120), d > 60)
+			Parts.box(m, "Ivy", b * CFrame.new(sx * (W - 0.3), H - 10, -d - 6), V(0.4, 20, 7), IVY, M.LeafyGrass, NOCOLLIDE)
 		end
-		refs.exitDoor = door
-		refs.exitPrompt = prompt(reader, "Вставить ключ-карту", "Считыватель", 1.2, 9)
-		refs.exitOut = b
-		refs.helipad = pad
 	end
+	for d = 6, 66, 12 do
+		Parts.box(m, "Arch", b * CFrame.new(0, H - 2, -d), V(C + T * 2, 4, 3), WALL_DARK, M.Slate)
+	end
+	Parts.box(m, "TunnelFloor", b * CFrame.new(0, 0.15, -35), V(C, 0.3, 70), RGB(70, 68, 64), M.Concrete)
+	local trigger = Parts.box(m, "ExitTrigger", b * CFrame.new(0, 6, -14), V(C, 12, 6), RGB(0, 0, 0), M.SmoothPlastic, { Transparency = 1, CanCollide = false, CanQuery = false })
+	refs.trigger = trigger
 
+	-- 2. пропасть: дыра вниз во всю ширину туннеля, через неё узкий мост
+	refs.pit = { cf = b * CFrame.new(0, -10, -88), size = V(C + 8, 28, 36) }
+	safe(function()
+		workspace.Terrain:FillBlock(refs.pit.cf, refs.pit.size, M.Air)
+	end)
+	for _, d in ipairs({ -70, -106 }) do
+		Parts.box(m, "PitFace", b * CFrame.new(0, -45, d + (d == -70 and -0.5 or 0.5)), V(C + 8, 90, 1), RGB(40, 38, 36), M.Slate)
+	end
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "PitSide", b * CFrame.new(sx * (W + 0.5), -45, -88), V(1, 90, 36), RGB(40, 38, 36), M.Slate)
+	end
+	Parts.box(m, "PitBottom", b * CFrame.new(0, -92, -88), V(C + 8, 2, 36), RGB(10, 8, 8), M.Slate)
+	for _, d in ipairs({ -80, -96 }) do
+		local glow = Parts.box(m, "PitGlow", b * CFrame.new(0, -88, d), V(2, 1, 2), RGB(120, 20, 20), M.Neon, NOCOLLIDE)
+		Parts.light(glow, 50, 2, RGB(255, 40, 30), true)
+	end
+	-- мост
+	Parts.box(m, "Bridge", b * CFrame.new(0, 0.3, -88), V(6, 0.6, 40), RGB(92, 66, 42), M.WoodPlanks)
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "BridgeRope", b * CFrame.new(sx * 3, 3.2, -88), V(0.25, 0.25, 40), RGB(150, 120, 80), M.Fabric, NOCOLLIDE)
+		for d = 68, 108, 8 do
+			Parts.box(m, "BridgePost", b * CFrame.new(sx * 3, 1.7, -d), V(0.4, 3.4, 0.4), RGB(70, 50, 32), M.Wood)
+		end
+	end
+	Parts.box(m, "LandingFloor", b * CFrame.new(0, 0.15, -109), V(C, 0.3, 6), RGB(70, 68, 64), M.Concrete)
+
+	-- 3. фасад лаборатории с дверью и считывателем ключ-карты
+	local face = -112
+	local FW, FH = 80, 40
+	local doorW, doorH = 14, 16
+	Parts.box(m, "LabFacade", b * CFrame.new(-(doorW / 2 + (FW - doorW) / 4), FH / 2, face), V((FW - doorW) / 2, FH, 3), CONC, M.Concrete)
+	Parts.box(m, "LabFacade", b * CFrame.new(doorW / 2 + (FW - doorW) / 4, FH / 2, face), V((FW - doorW) / 2, FH, 3), CONC, M.Concrete)
+	Parts.box(m, "LabFacade", b * CFrame.new(0, doorH + (FH - doorH) / 2, face), V(doorW, FH - doorH, 3), CONC, M.Concrete)
+	local door = Parts.box(m, "ExitDoor", b * CFrame.new(0, doorH / 2, face + 0.3), V(doorW, doorH, 1.6), RGB(90, 95, 100), M.DiamondPlate)
+	for _, x in ipairs({ -doorW / 2 - 1, doorW / 2 + 1 }) do
+		Parts.box(m, "HazardStripe", b * CFrame.new(x, doorH / 2, face + 1.6), V(1.2, doorH, 0.2), RGB(230, 180, 40), M.SmoothPlastic, NOCOLLIDE)
+	end
+	for _, x in ipairs({ -12, 12 }) do
+		local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(x, doorH + 3, face + 2), V(1.8, 1.8, 1.8), RGB(120, 255, 160), M.Neon)
+		Parts.light(lamp, 40, 1.8, RGB(140, 255, 170), true)
+	end
+	local sign = Parts.box(m, "ExitSign", b * CFrame.new(0, doorH + 7, face + 1.7), V(24, 5, 0.3), RGB(20, 40, 25), M.SmoothPlastic)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Back
+	sg.PixelsPerStud = 25
+	sg.Parent = sign
+	local tl = Instance.new("TextLabel")
+	tl.Size = UDim2.fromScale(1, 1)
+	tl.BackgroundTransparency = 1
+	tl.Text = "СЕКТОР 7 · ВЫХОД"
+	tl.Font = Enum.Font.GothamBlack
+	tl.TextScaled = true
+	tl.TextColor3 = RGB(140, 255, 170)
+	tl.Parent = sg
+	local reader = Parts.box(m, "CardReader", b * CFrame.new(doorW / 2 + 3, 4.6, face + 1.8), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
+	refs.readerLight = Parts.box(m, "ReaderLight", reader.CFrame * CFrame.new(0, 0.8, 0.3), V(0.5, 0.3, 0.1), RGB(255, 40, 40), M.Neon, NOCOLLIDE)
+	Parts.box(m, "ReaderSlot", reader.CFrame * CFrame.new(0, -0.2, 0.3), V(1, 0.12, 0.1), RGB(10, 10, 10), M.SmoothPlastic, NOCOLLIDE)
+	refs.reader = reader
+	refs.exitDoor = door
+	refs.exitPrompt = prompt(reader, "Приложить ключ-карту", "Считыватель", 0.3, 9)
+	refs.doorFront = b * CFrame.new(doorW / 2 - 1, 3, face + 7)
+
+	-- 4. лаборатория внутри: пусто, мигает свет, брошенные столы и мониторы
+	local L0, L1 = face - 1.5, face - 61.5
+	local LW, LH = 40, 14
+	local len = L0 - L1
+	local mid = (L0 + L1) / 2
+	Parts.box(m, "LabFloor", b * CFrame.new(0, 0.2, mid), V(LW, 0.4, len), RGB(200, 202, 205), M.Concrete)
+	Parts.box(m, "LabCeiling", b * CFrame.new(0, LH, mid), V(LW, 0.6, len), RGB(160, 162, 165), M.Concrete)
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "LabWall", b * CFrame.new(sx * (LW / 2 + 0.5), LH / 2, mid), V(1, LH, len), RGB(215, 218, 220), M.SmoothPlastic)
+	end
+	-- задняя стена с дверью наружу
+	local backW = 12
+	Parts.box(m, "LabWall", b * CFrame.new(-(backW / 2 + (LW - backW) / 4), LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(215, 218, 220), M.SmoothPlastic)
+	Parts.box(m, "LabWall", b * CFrame.new(backW / 2 + (LW - backW) / 4, LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(215, 218, 220), M.SmoothPlastic)
+	Parts.box(m, "LabWall", b * CFrame.new(0, 11 + (LH - 11) / 2, L1), V(backW, LH - 11, 1), RGB(215, 218, 220), M.SmoothPlastic)
+	refs.labBackDoor = Parts.box(m, "LabBackDoor", b * CFrame.new(0, 5.5, L1), V(backW, 11, 0.8), RGB(90, 95, 100), M.DiamondPlate)
+	for d = L0 - 6, L1 + 6, -10 do
+		local lamp = Parts.box(m, "LabLamp", b * CFrame.new(0, LH - 0.5, d), V(8, 0.3, 1.2), RGB(230, 245, 255), M.Neon)
+		Parts.light(lamp, 24, 1, RGB(220, 235, 255), (d // 10) % 2 == 0)
+	end
+	local rng = Random.new(ex.i * 31 + ex.j)
+	for k = 0, 4 do
+		for _, sx in ipairs({ -1, 1 }) do
+			local d = L0 - 8 - k * 11
+			local dcf = b * CFrame.new(sx * 14, 0, d) * CFrame.Angles(0, sx * math.pi / 2, 0)
+			Parts.box(m, "Desk", dcf * CFrame.new(0, 2.6, 0), V(8, 0.3, 3.4), RGB(70, 72, 78), M.Metal)
+			Parts.box(m, "DeskLeg", dcf * CFrame.new(0, 1.25, 0), V(7.6, 2.5, 0.3), RGB(60, 62, 66), M.Metal)
+			local screen = Parts.box(m, "Monitor", dcf * CFrame.new(-1.5, 4, 1), V(2.6, 1.7, 0.2), rng:NextNumber() < 0.5 and RGB(60, 200, 120) or RGB(70, 140, 230), M.Neon, NOCOLLIDE)
+			screen.CFrame = screen.CFrame * CFrame.Angles(0, math.pi, 0)
+			Parts.box(m, "Paper", dcf * CFrame.new(rng:NextNumber(-2, 2), 2.8, rng:NextNumber(-1, 1)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(1, 0.05, 1.3), RGB(240, 240, 235), M.SmoothPlastic, NOCOLLIDE)
+			Parts.box(m, "Chair", dcf * CFrame.new(0, 1.2, -2.6) * CFrame.Angles(0, rng:NextNumber(-0.6, 0.6), rng:NextNumber() < 0.2 and 1.4 or 0), V(1.8, 2.4, 1.8), RGB(40, 40, 46), M.Fabric)
+		end
+	end
+	-- разбитая колба в центре
+	Parts.box(m, "TankBase", b * CFrame.new(0, 0.8, mid), V(7, 1.2, 7), RGB(60, 62, 66), M.Metal, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+	Parts.box(m, "TankGlass", b * CFrame.new(0, 5, mid), V(7, 6, 6), RGB(150, 220, 200), M.Glass, { Transparency = 0.6, CanCollide = false })
+	for _ = 1, 10 do
+		Parts.box(m, "Shard", b * CFrame.new(rng:NextNumber(-8, 8), 0.45, mid + rng:NextNumber(-8, 8)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(0.8, 0.05, 0.5), RGB(170, 230, 210), M.Glass, NOCOLLIDE)
+	end
+	refs.labStart = b * CFrame.new(0, 5, face - 3)
+	refs.labEnd = b * CFrame.new(0, 5, L1 + 4)
+
+	-- 5. снаружи: вертолётная площадка в лесу
+	local pad = b * CFrame.new(0, 0, L1 - 70)
+	Parts.box(m, "Helipad", pad * CFrame.new(0, 0.2, 0) * CFrame.Angles(0, 0, math.pi / 2), V(0.4, 56, 56), RGB(80, 80, 82), M.Concrete, { Shape = Enum.PartType.Cylinder })
+	Parts.box(m, "PadH", pad * CFrame.new(-6, 0.45, 0), V(2, 0.1, 16), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "PadH", pad * CFrame.new(6, 0.45, 0), V(2, 0.1, 16), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "PadH", pad * CFrame.new(0, 0.45, 0), V(10, 0.1, 2), RGB(240, 240, 240), M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "Path", b * CFrame.new(0, 0.1, L1 - 35), V(8, 0.2, 70), RGB(120, 100, 70), M.Ground, NOCOLLIDE)
+	refs.helipad = pad
+	-- зона выхода: здесь нет Скрежетников, и лес не растёт
+	refs.zone = { cf = b * CFrame.new(0, 0, -150), size = V(100, 300, 320) }
 	m.Parent = parent
 	return refs
 end

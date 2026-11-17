@@ -15,7 +15,8 @@ local G = Building.Grid
 Building.Pieces = {
 	{ Id = "foundation", Name = "Фундамент", Cost = { planks = 6 }, Size = V(8, 3, 8) },
 	{ Id = "wall", Name = "Стена", Cost = { planks = 4 }, Size = V(8, 8, 0.8), Edge = true },
-	{ Id = "doorway", Name = "Проём с дверью", Cost = { planks = 6 }, Size = V(8, 8, 0.8), Edge = true },
+	{ Id = "doorway", Name = "Дверной проём", Cost = { planks = 5 }, Size = V(8, 8, 0.8), Edge = true },
+	{ Id = "door", Name = "Дверь (в проём)", Cost = { planks = 3 }, Size = V(3.6, 6.2, 0.4), Door = true },
 	{ Id = "window", Name = "Стена с окном", Cost = { planks = 4 }, Size = V(8, 8, 0.8), Edge = true },
 	{ Id = "floor", Name = "Перекрытие / крыша", Cost = { planks = 4 }, Size = V(8, 0.8, 8) },
 	{ Id = "stairs", Name = "Лестница", Cost = { planks = 5 }, Size = V(7.6, 8, 8) },
@@ -44,6 +45,9 @@ function Building.cframe(id, O, a)
 	elseif id == "stairs" then
 		return CFrame.new(O + V((a.cx + 0.5) * G, a.y + 4, (a.cz + 0.5) * G)) * CFrame.Angles(0, (a.rot or 0) * math.pi / 2, 0)
 	else
+		if id == "door" then
+			return Building.cframe("wall", O, a) * CFrame.new(0, -0.9, 0)
+		end
 		if a.axis == "X" then
 			return CFrame.new(O + V((a.ex + 0.5) * G, a.y + 4, a.ez * G))
 		else
@@ -55,7 +59,9 @@ end
 -- уникальный ключ места (две детали в одно место поставить нельзя)
 function Building.key(id, a)
 	local y = math.floor(a.y * 2 + 0.5)
-	if Building.ById[id].Edge then
+	if id == "door" then
+		return "D:" .. a.ex .. ":" .. a.ez .. ":" .. a.axis .. ":" .. y
+	elseif Building.ById[id].Edge then
 		return "E:" .. a.ex .. ":" .. a.ez .. ":" .. a.axis .. ":" .. y
 	elseif id == "stairs" then
 		return "S:" .. a.cx .. ":" .. a.cz .. ":" .. y
@@ -101,7 +107,12 @@ function Building.snap(id, O, pos, hitInst, look, pieces)
 	flat = flat.Magnitude > 0.01 and flat.Unit or V(0, 0, -1)
 	local pk = piece and piece:GetAttribute("BKind")
 	local def = Building.ById[id]
-	if id == "foundation" then
+	if id == "door" then
+		if pk == "doorway" or pk == "door" then
+			return { ex = piece:GetAttribute("EX"), ez = piece:GetAttribute("EZ"), axis = piece:GetAttribute("Axis"), y = piece:GetAttribute("Base") }
+		end
+		return nil
+	elseif id == "foundation" then
 		if pk == "foundation" then
 			local dx, dz = dominant(flat)
 			return { cx = piece:GetAttribute("CX") + dx, cz = piece:GetAttribute("CZ") + dz, y = piece:GetAttribute("Top") }

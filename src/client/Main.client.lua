@@ -23,6 +23,8 @@ local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local Viewmodel = require(script.Parent:WaitForChild("Viewmodel"))
 local MonsterView = require(script.Parent:WaitForChild("MonsterView"))
 local BuildMode = require(script.Parent:WaitForChild("BuildMode"))
+local Radial = require(script.Parent:WaitForChild("Radial"))
+local PathfindingService = game:GetService("PathfindingService")
 MonsterView.start()
 
 local function remote(n)
@@ -214,6 +216,8 @@ make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = 
 local tools = {}
 local equipped = nil
 BuildMode.init(gui, make)
+Radial.init(gui)
+local toggleMap, updateMap, updatePings
 
 local function equip(id)
 	if id == equipped then
@@ -479,18 +483,241 @@ local function aimRay(range)
 	return workspace:Raycast(cam.CFrame.Position, cam.CFrame.LookVector * (range + 4), rayParams())
 end
 
+------------------------------------------------------------------
+-- Карта лабиринта (Tab): её нужно найти. Меняется вместе со стенами.
+------------------------------------------------------------------
+local mapPanel = make("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(600, 600),
+	BackgroundColor3 = RGB(214, 196, 150),
+	Visible = false,
+	ZIndex = 25,
+}, gui)
+corner(mapPanel, 14)
+make("UIStroke", { Color = RGB(90, 70, 40), Thickness = 4 }, mapPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 6), Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 18, TextColor3 = RGB(70, 50, 30), Text = "КАРТА ЛАБИРИНТА  ·  Tab — закрыть", ZIndex = 26 }, mapPanel)
+local mapCanvas = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 12), Size = UDim2.fromOffset(550, 550), BackgroundTransparency = 1, ZIndex = 26 }, mapPanel)
+local mapMe = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(12, 12), BackgroundColor3 = RGB(220, 30, 30), ZIndex = 29 }, mapCanvas)
+corner(mapMe, 6)
+local mapData
+local function mapScale()
+	return mapData and (550 / (mapData.radius * 2 + 80)) or 0.3
+end
+local function toMap(rel)
+	local sc = mapScale()
+	return UDim2.fromOffset(275 + rel.X * sc, 275 + rel.Z * sc)
+end
+local function drawMap()
+	for _, c in ipairs(mapCanvas:GetChildren()) do
+		if c ~= mapMe then
+			c:Destroy()
+		end
+	end
+	if not mapData then
+		return
+	end
+	local sc = mapScale()
+	local circle = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(275, 275), Size = UDim2.fromOffset(mapData.radius * 2 * sc, mapData.radius * 2 * sc), BackgroundTransparency = 1, ZIndex = 26 }, mapCanvas)
+	corner(circle, 1000)
+	make("UIStroke", { Color = RGB(120, 95, 60), Thickness = 2, Transparency = 0.5 }, circle)
+	local ch = mapData.clearing
+	local clr = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(275, 275), Size = UDim2.fromOffset(ch * 2 * sc, ch * 2 * sc), BackgroundColor3 = RGB(120, 160, 90), BackgroundTransparency = 0.3, ZIndex = 26 }, mapCanvas)
+	make("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = RGB(40, 60, 30), Text = "ПОЛЯНА", ZIndex = 27 }, clr)
+	for _, w in ipairs(mapData.walls) do
+		local axis, fixedC, a, b, crack = w[1], w[2], w[3], w[4], w[5]
+		local len = (b - a) * sc
+		local thick = math.max(2, 4 * sc)
+		local f
+		if axis == 1 then
+			f = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = toMap(V((a + b) / 2, 0, fixedC)), Size = UDim2.fromOffset(len, thick), BorderSizePixel = 0, ZIndex = 27 }, mapCanvas)
+		else
+			f = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = toMap(V(fixedC, 0, (a + b) / 2)), Size = UDim2.fromOffset(thick, len), BorderSizePixel = 0, ZIndex = 27 }, mapCanvas)
+		end
+		f.BackgroundColor3 = crack == 1 and RGB(160, 120, 70) or RGB(60, 45, 30)
+	end
+	local exitM = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = toMap(mapData.exit), Size = UDim2.fromOffset(70, 18), BackgroundColor3 = RGB(40, 140, 70), Font = Enum.Font.GothamBlack, TextSize = 12, TextColor3 = RGB(255, 255, 255), Text = "ВЫХОД", ZIndex = 28 }, mapCanvas)
+	corner(exitM, 4)
+end
+remote("MapData").OnClientEvent:Connect(function(walls, O, clearing, radius, exitRel)
+	mapData = { walls = walls, O = O, clearing = clearing, radius = radius, exit = exitRel }
+	if mapPanel.Visible then
+		drawMap()
+	else
+		mapData.dirty = true
+	end
+end)
+function toggleMap()
+	if mapPanel.Visible then
+		mapPanel.Visible = false
+		return
+	end
+	if (player:GetAttribute("Res_map") or 0) < 1 or not mapData then
+		notify("У тебя нет карты. Она лежит на столе где-то в лабиринте.")
+		return
+	end
+	mapData.dirty = false
+	drawMap()
+	mapPanel.Visible = true
+end
+function updateMap()
+	if not mapPanel.Visible then
+		return
+	end
+	if not inMatch() then
+		mapPanel.Visible = false
+		return
+	end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp and mapData then
+		mapMe.Position = toMap(hrp.Position - mapData.O)
+		mapMe.Visible = true
+	end
+end
+
+------------------------------------------------------------------
+-- Сигнал раненого: подсветка сквозь стены и стрелки на полу к нему
+------------------------------------------------------------------
+local pingFx = {} -- [player] = {hl, arrows, nextPath}
+local function clearPing(who)
+	local fx = pingFx[who]
+	if fx then
+		if fx.hl then
+			fx.hl:Destroy()
+		end
+		for _, a in ipairs(fx.arrows) do
+			a:Destroy()
+		end
+		pingFx[who] = nil
+	end
+end
+local pathObj = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = false, WaypointSpacing = 6 })
+local function drawArrows(fx, points)
+	for _, a in ipairs(fx.arrows) do
+		a:Destroy()
+	end
+	fx.arrows = {}
+	for k = 1, math.min(#points - 1, 16) do
+		local a, b = points[k], points[k + 1]
+		if (b - a).Magnitude > 0.5 then
+			local arrow = Instance.new("WedgePart")
+			arrow.Anchored = true
+			arrow.CanCollide = false
+			arrow.CanQuery = false
+			arrow.CastShadow = false
+			arrow.Size = V(2, 0.3, 2.4)
+			arrow.Material = Enum.Material.Neon
+			arrow.Color = RGB(255, 210, 60)
+			local flat = V(b.X - a.X, 0, b.Z - a.Z)
+			-- клин «смотрит» острым концом вперёд (-Z)
+			arrow.CFrame = CFrame.lookAt(a + V(0, 0.3, 0), a + V(0, 0.3, 0) + flat)
+			arrow.Parent = workspace.CurrentCamera
+			table.insert(fx.arrows, arrow)
+		end
+	end
+end
+function updatePings()
+	local now = workspace:GetServerTimeNow()
+	local char = player.Character
+	local myHrp = char and char:FindFirstChild("HumanoidRootPart")
+	for _, who in ipairs(Players:GetPlayers()) do
+		local active = who ~= player and inMatch() and (who:GetAttribute("PingUntil") or 0) > now and who:GetAttribute("Downed") == true and who.Character
+		if not active then
+			clearPing(who)
+		else
+			local fx = pingFx[who]
+			if not fx then
+				fx = { arrows = {}, nextPath = 0 }
+				local hl = Instance.new("Highlight")
+				hl.FillColor = RGB(255, 60, 60)
+				hl.OutlineColor = RGB(255, 230, 120)
+				hl.FillTransparency = 0.3
+				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				hl.Adornee = who.Character
+				hl.Parent = workspace.CurrentCamera
+				fx.hl = hl
+				pingFx[who] = fx
+			end
+			local theirs = who.Character:FindFirstChild("HumanoidRootPart")
+			if myHrp and theirs and os.clock() >= fx.nextPath and not fx.busy then
+				fx.nextPath = os.clock() + 1.5
+				fx.busy = true
+				local from, to = myHrp.Position, theirs.Position
+				task.spawn(function()
+					local pts
+					local ok = pcall(function()
+						pathObj:ComputeAsync(from, to)
+					end)
+					if ok and pathObj.Status == Enum.PathStatus.Success then
+						pts = {}
+						for _, w in ipairs(pathObj:GetWaypoints()) do
+							table.insert(pts, w.Position)
+						end
+					else
+						pts = {}
+						local dir = (to - from) * V(1, 0, 1)
+						for k = 0, 8 do
+							table.insert(pts, from - V(0, 2.8, 0) + dir.Unit * (4 + k * 5))
+						end
+					end
+					fx.busy = false
+					if pingFx[who] == fx then
+						drawArrows(fx, pts)
+					end
+				end)
+			end
+		end
+	end
+end
+
+-- раненое тело — тряпичная кукла (физику включаем на своём клиенте)
+player:GetAttributeChangedSignal("Downed"):Connect(function()
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return
+	end
+	if player:GetAttribute("Downed") then
+		hum:ChangeState(Enum.HumanoidStateType.Physics)
+	else
+		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+	end
+end)
+
+-- мигающие лампы (туннель, лаборатория, костры)
+task.spawn(function()
+	while true do
+		task.wait(0.09)
+		for _, l in ipairs(CollectionService:GetTagged("FlickerLight")) do
+			if l:IsA("Light") then
+				local base = l:GetAttribute("B0")
+				if not base then
+					base = l.Brightness
+					l:SetAttribute("B0", base)
+				end
+				local r = math.random()
+				l.Brightness = r < 0.06 and base * 0.1 or base * (0.85 + math.random() * 0.25)
+			end
+		end
+	end
+end)
+
 local function doSwing()
 	if not inMatch() or cutscene or craft.Visible then
 		return
 	end
+	if Radial.isOpen() then
+		return
+	end
 	local def = Items.Tools[equipped or "fists"] or Items.Tools.fists
-	if def.Kind == "blueprint" then
-		if BuildMode.place(remote("Build")) then
+	if def.Kind == "blueprint" or def.Kind == "deploy" then
+		if BuildMode.place(remote("Build"), remote("Place")) then
 			sound(Config.Sounds.Click, 0.6, 0.8)
 		end
 		return
 	end
-	if def.Kind == "torch" or player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") then
+	if def.Kind == "torch" or player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") or player:GetAttribute("Dragging") then
 		return -- факелом не бьют: он только светит
 	end
 	if os.clock() - lastSwing < 0.42 then
@@ -530,9 +757,20 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
 		doSwing()
-	elseif input.KeyCode == Enum.KeyCode.R and equipped == "blueprint" then
-		BuildMode.cycle()
-		sound(Config.Sounds.Click, 0.4, 1.2)
+	elseif input.KeyCode == Enum.KeyCode.R and inMatch() and not cutscene then
+		local kind = equipped and Items.Tools[equipped] and Items.Tools[equipped].Kind
+		if player:GetAttribute("Downed") then
+			remote("Ping"):FireServer()
+		elseif kind == "blueprint" then
+			BuildMode.pieceMenu(Radial)
+		elseif kind == "hammer" then
+			BuildMode.hammerMenu(Radial, remote("Upgrade"))
+		elseif kind == "deploy" then
+			BuildMode.rotate()
+			sound(Config.Sounds.Click, 0.4, 1.2)
+		end
+	elseif input.KeyCode == Enum.KeyCode.Tab and inMatch() and not cutscene then
+		toggleMap()
 	elseif input.KeyCode == Enum.KeyCode.H then
 		remote("Eat"):FireServer()
 	elseif input.KeyCode == Enum.KeyCode.C and inMatch() and not cutscene then
@@ -551,6 +789,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 end)
 UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.R and Radial.isOpen() then
+		Radial.confirm()
+	end
 	if input.KeyCode == Enum.KeyCode.LeftShift then
 		sprintHeld = false
 	end
@@ -749,10 +990,13 @@ end)
 ------------------------------------------------------------------
 -- Финал: дверь открыта, вертолёт садится и уносит всех из лабиринта
 ------------------------------------------------------------------
-local function buildHeli(cf)
+local function buildHeli(cf, K)
+	K = K or 1
 	local m = Instance.new("Model")
 	m.Name = "Helicopter"
 	local function p(size, rel, color, mat, extra)
+		size = size * K
+		rel = CFrame.new(rel.Position * K) * rel.Rotation
 		local pt = make("Part", { Anchored = true, CanCollide = false, CanQuery = false, Size = size, Color = color, Material = mat or Enum.Material.SmoothPlastic }, m)
 		if extra then
 			for k, v in pairs(extra) do
@@ -823,70 +1067,206 @@ local function buildHeli(cf)
 	return m, setCF
 end
 
-remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins, mazeCenter)
+-- ходьба от первого лица по точкам: покачивание, шаги, друзья рядом
+local function walkPath(cam, points, duration, opts)
+	opts = opts or {}
+	local total = 0
+	local segLen = {}
+	for k = 1, #points - 1 do
+		segLen[k] = (points[k + 1] - points[k]).Magnitude
+		total += segLen[k]
+	end
+	local t0 = os.clock()
+	local nextStep = 0
+	runFor(duration, function(a)
+		local t = os.clock() - t0
+		local dist = total * smoothstep(a)
+		local k, acc = 1, 0
+		while k < #points - 1 and acc + segLen[k] < dist do
+			acc += segLen[k]
+			k += 1
+		end
+		local f = segLen[k] > 0 and math.clamp((dist - acc) / segLen[k], 0, 1) or 1
+		local pos = points[k]:Lerp(points[k + 1], f)
+		local dir = (points[k + 1] - points[k])
+		dir = dir.Magnitude > 0.01 and dir.Unit or V(0, 0, -1)
+		local bob = math.sin(t * 9) * 0.2
+		local side = math.cos(t * 4.5) * 0.1
+		local look = opts.lookAt and opts.lookAt(a, pos) or (pos + dir * 10 + V(0, (opts.pitch or 0) * 10, 0))
+		cam.CFrame = CFrame.lookAt(pos + V(side, bob, 0), look) * CFrame.Angles(0, 0, math.cos(t * 4.5) * 0.01)
+		if t >= nextStep and a < 0.98 then
+			nextStep = t + (opts.stepGap or 0.48)
+			sound(Config.Sounds.Step, 0.35, (opts.stepPitch or 0.75) + math.random() * 0.15)
+		end
+		if opts.each then
+			opts.each(a, pos, dir, t)
+		end
+	end)
+end
+
+-- ролик у выхода: туннель → мост над пропастью → дверь лаборатории и считыватель
+remote("ExitIntro").OnClientEvent:Connect(function(exitOut, doorFront, readerPos)
 	cutscene = true
 	craft.Visible = false
+	Radial.close()
+	local cam = workspace.CurrentCamera
+	cam.CameraType = Enum.CameraType.Scriptable
+	local b = exitOut
+	subtitle.Text = "Туннель... В самом конце — свет."
+	walkPath(cam, { (b * CFrame.new(0, 5, -4)).Position, (b * CFrame.new(0, 5, -66)).Position }, 4.6)
+	subtitle.Text = "Пропасть... Не смотри вниз. Только по мосту."
+	walkPath(cam, { (b * CFrame.new(0, 5, -66)).Position, (b * CFrame.new(0, 5.3, -108)).Position }, 4, {
+		stepGap = 0.6,
+		stepPitch = 0.55,
+		lookAt = function(a, pos)
+			local down = math.sin(math.clamp((a - 0.15) / 0.5, 0, 1) * math.pi) * 9
+			return pos + b.LookVector * 10 - V(0, down, 0) + b.RightVector * math.sin(a * 6) * 1.5
+		end,
+	})
+	local eye = (b * CFrame.new(0, 5.3, -108)).Position
+	local fromLook = eye + b.LookVector * 10
+	subtitle.Text = "Дверь... и считыватель. Ключ-карта! Нужно приложить ключ-карту."
+	runFor(1.2, function(a)
+		cam.CFrame = CFrame.lookAt(eye, fromLook:Lerp(readerPos, smoothstep(a)))
+	end)
+	task.wait(1.4)
+	subtitle.Text = ""
+	cam.CameraType = Enum.CameraType.Custom
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		cam.CameraSubject = hum
+	end
+	cutscene = false
+	notify("Достань ключ-карту и приложи к считывателю (E). Ключ-карта — в золотом сундуке.")
+	local _ = doorFront
+end)
+
+-- достаём ключ-карту из кармана и прикладываем к считывателю
+remote("CardInsert").OnClientEvent:Connect(function(readerPos)
+	cutscene = true
+	Radial.close()
+	local cam = workspace.CurrentCamera
+	local eye = cam.CFrame.Position
+	cam.CameraType = Enum.CameraType.Scriptable
+	local from = cam.CFrame
+	runFor(0.5, function(a)
+		cam.CFrame = from:Lerp(CFrame.lookAt(eye, readerPos), smoothstep(a))
+	end)
+	Viewmodel.card()
+	task.wait(1.1)
+	sound(Config.Sounds.Click, 0.8, 1.6)
+	task.wait(0.2)
+	sound(Config.Sounds.Click, 0.8, 2)
+end)
+
+remote("MazeShift").OnClientEvent:Connect(function()
+	shake(0.9)
+	sound(Config.Sounds.Rumble, 1.5, 0.35)
+	task.delay(1.2, function()
+		shake(0.6)
+	end)
+end)
+
+remote("Outro").OnClientEvent:Connect(function(info)
+	cutscene = true
+	craft.Visible = false
+	Radial.close()
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Scriptable
 	local temp = {}
-	mazeCenter = mazeCenter or (exitOut.Position - exitOut.LookVector * 500)
-
-	-- вертолёт уже ждёт на лесной поляне, винты крутятся
-	local heliCF = pad * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, math.pi / 2, 0)
-	local heli, setCF = buildHeli(heliCF)
-	table.insert(temp, heli)
-	local rotor = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 0.8, PlaybackSpeed = 0.7 }, SoundService)
-	rotor:Play()
+	local mazeCenter = info.mazeCenter
+	local b = info.exitOut
+	local fwd = b.LookVector
 
 	-- друзья идут рядом
 	local friends = {}
 	local k = 0
-	for _, who in ipairs(players) do
+	for _, who in ipairs(info.players) do
 		if who ~= player then
 			k += 1
 			local av = cloneAvatar(who)
 			if av then
 				av.Parent = workspace
 				table.insert(temp, av)
-				table.insert(friends, { m = av, side = (k % 2 == 1) and -4 or 4, back = 3 + math.floor((k - 1) / 2) * 4 })
+				table.insert(friends, { m = av, side = (k % 2 == 1) and -3.5 or 3.5, back = 2 + math.floor((k - 1) / 2) * 3.5 })
 			end
 		end
 	end
-
-	-- 1. ворота поднимаются
-	local start = exitOut * CFrame.new(0, 5.4, -40)
-	subtitle.Text = "Ворота поднимаются... За ними — свет."
-	runFor(4.5, function()
-		cam.CFrame = start * CFrame.Angles(math.noise(os.clock() * 3) * 0.01, 0, 0)
-		setCF(heliCF, 1 / 60)
-	end)
-
-	-- 2. идём от первого лица: покачивание камеры и хруст травы под ногами
-	subtitle.Text = "Лес... Настоящий лес. Мы выбрались!"
-	local target = pad * CFrame.new(0, 5.4, 16)
-	local from, to = start.Position, target.Position
-	local walkTime = 8
-	local nextStep = 0
-	local t0 = os.clock()
-	runFor(walkTime, function(a)
-		local t = os.clock() - t0
-		local pos = from:Lerp(to, a)
-		local bob = math.sin(t * 9) * 0.22
-		local sideBob = math.cos(t * 4.5) * 0.12
-		local look = pos + (to - from).Unit * 10 + V(math.sin(t * 0.7) * 2.5, -0.8, 0)
-		cam.CFrame = CFrame.lookAt(pos + V(sideBob, bob, 0), look) * CFrame.Angles(0, 0, math.cos(t * 4.5) * 0.012)
-		if t >= nextStep then
-			nextStep = t + 0.48
-			sound(Config.Sounds.Step, 0.35, 0.7 + math.random() * 0.15)
-		end
+	local function moveFriends(pos, dir, t)
+		local right = dir:Cross(V(0, 1, 0))
 		for _, f in ipairs(friends) do
-			local fp = from:Lerp(to, math.max(0, a - 0.04)) + (exitOut.RightVector * f.side) + exitOut.LookVector * f.back - V(0, 2.4, 0) + V(0, math.abs(math.sin(t * 9)) * 0.3, 0)
-			f.m:PivotTo(CFrame.lookAt(fp, fp - exitOut.LookVector))
+			local fp = pos + right * f.side - dir * f.back - V(0, 2.4, 0) + V(0, math.abs(math.sin(t * 9)) * 0.25, 0)
+			f.m:PivotTo(CFrame.lookAt(fp, fp + dir))
 		end
-		setCF(heliCF, 1 / 60)
+	end
+
+	-- 1. дверь лаборатории поднимается
+	local eye0 = (b * CFrame.new(0, 5.3, -106)).Position
+	subtitle.Text = "Дверь открывается..."
+	runFor(3, function()
+		cam.CFrame = CFrame.lookAt(eye0, info.labStart.Position) * CFrame.Angles(math.noise(os.clock() * 3) * 0.008, 0, 0)
 	end)
 
-	-- 3. садимся в вертолёт
+	-- 2. идём через пустую лабораторию
+	subtitle.Text = "Лаборатория... Здесь никого нет. Будто все ушли в спешке."
+	walkPath(cam, { eye0, info.labStart.Position, info.labEnd.Position }, 11, {
+		stepPitch = 0.9,
+		lookAt = function(a, pos)
+			local sway = math.sin(a * math.pi * 3) * 6
+			return pos + fwd * 10 + b.RightVector * sway - V(0, 1, 0)
+		end,
+		each = function(_, pos, dir, t)
+			moveFriends(pos, dir, t)
+		end,
+	})
+
+	-- 3. вторая дверь открывается — снаружи свет и шум винтов
+	subtitle.Text = "Ещё одна дверь..."
+	local back = info.backDoor
+	if back and back.Parent then
+		local goal = back.CFrame + V(0, 11, 0)
+		TweenService:Create(back, TweenInfo.new(2.4, Enum.EasingStyle.Sine), { CFrame = goal }):Play()
+	end
+	local eye1 = info.labEnd.Position
+	runFor(2.6, function()
+		cam.CFrame = CFrame.lookAt(eye1, eye1 + fwd * 10) * CFrame.Angles(math.noise(os.clock() * 4) * 0.01, 0, 0)
+	end)
+
+	-- 4. огромный вертолёт садится на площадку
+	local K = 1.8
+	local pad = info.pad
+	local heliCF = pad * CFrame.new(0, 0.6 * K, 0) * CFrame.Angles(0, math.pi / 2, 0)
+	local startCF = heliCF + V(0, 140, 0) + fwd * 160
+	local heli, setCF = buildHeli(startCF, K)
+	table.insert(temp, heli)
+	local rotor = make("Sound", { SoundId = Config.Sounds.Rumble, Looped = true, Volume = 1, PlaybackSpeed = 0.7 }, SoundService)
+	rotor:Play()
+	subtitle.Text = "Вертолёт! Он садится прямо перед нами!"
+	local outside = (pad * CFrame.new(0, 5.3, 0)).Position - fwd * 34
+	local heliNow = startCF
+	walkPath(cam, { eye1, outside }, 9, {
+		lookAt = function(_, pos)
+			local hp = heliNow.Position
+			return pos:Lerp(hp, 0.5) + (hp - pos).Unit * 10
+		end,
+		each = function(a, pos, dir, t)
+			moveFriends(pos, dir, t)
+			local e = smoothstep(math.clamp(a * 1.15, 0, 1))
+			local cf = startCF:Lerp(heliCF, e) * CFrame.Angles(0.12 * (1 - e), 0, math.sin(t * 1.3) * 0.04 * (1 - e))
+			heliNow = cf
+			setCF(cf, 1 / 60)
+			if e > 0.85 then
+				shake(0.02)
+			end
+		end,
+	})
+	runFor(1.5, function()
+		setCF(heliCF, 1 / 60)
+		cam.CFrame = CFrame.lookAt(outside, heliCF.Position)
+	end)
+
+	-- 5. садимся у открытой боковой двери
 	subtitle.Text = "Залезаем!"
 	fade.BackgroundColor3 = RGB(0, 0, 0)
 	TweenService:Create(fade, TweenInfo.new(0.4), { BackgroundTransparency = 0 }):Play()
@@ -894,32 +1274,29 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	for _, f in ipairs(friends) do
 		f.m:Destroy()
 	end
-	-- место у открытой боковой двери: камера снаружи корпуса, винт выше кадра
-	local seat = CFrame.new(5.4, 4.6, 2.6)
-	cam.CFrame = CFrame.lookAt((heliCF * seat).Position, (heliCF * CFrame.new(30, 2, 2.6)).Position)
+	local seat = CFrame.new(5.4 * K, 4.6 * K, 2.6 * K)
+	cam.CFrame = CFrame.lookAt((heliCF * seat).Position, (heliCF * CFrame.new(30 * K, 2, 2.6 * K)).Position)
 	TweenService:Create(fade, TweenInfo.new(0.6), { BackgroundTransparency = 1 }):Play()
 
-	-- 4. взлёт: поднимаемся высоко над лабиринтом и смотрим на него целиком
+	-- 6. взлёт: высоко над лабиринтом, смотрим на него целиком
 	subtitle.Text = "Взлетаем... Вот он — весь лабиринт."
-	local liftTime = 10
-	local high = heliCF.Position:Lerp(mazeCenter, 0.35) + V(0, 420, 0)
-	runFor(liftTime, function(a)
-		local e = a * a * (3 - 2 * a)
+	local high = heliCF.Position:Lerp(mazeCenter, 0.35) + V(0, 520, 0)
+	runFor(11, function(a)
+		local e = smoothstep(a)
 		local pos = heliCF.Position:Lerp(high, e)
 		local toMaze = (mazeCenter - pos) * V(1, 0, 1)
 		local hc = CFrame.lookAt(pos, pos + V(toMaze.Z, 0, -toMaze.X)) * CFrame.Angles(-0.08 * math.sin(a * math.pi), 0, 0)
 		setCF(hc, 1 / 60)
-		local eye = (hc * seat).Position
-		cam.CFrame = CFrame.lookAt(eye, mazeCenter) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
+		cam.CFrame = CFrame.lookAt((hc * seat).Position, mazeCenter) * CFrame.Angles(math.noise(os.clock() * 5) * 0.006, 0, 0)
 	end)
 	task.wait(2.5)
 
-	-- 5. улетаем
+	-- 7. улетаем к горизонту
 	subtitle.Text = "Прощай, лабиринт."
 	local away = (high - mazeCenter) * V(1, 0, 1)
 	away = away.Magnitude > 1 and away.Unit or V(1, 0, 0)
 	runFor(5, function(a)
-		local pos = high + away * 600 * a * a + V(0, 60 * a, 0)
+		local pos = high + away * 700 * a * a + V(0, 60 * a, 0)
 		local hc = CFrame.lookAt(pos, pos + V(-away.Z, 0, away.X))
 		setCF(hc, 1 / 60)
 		cam.CFrame = CFrame.lookAt((hc * seat).Position, mazeCenter)
@@ -934,11 +1311,11 @@ remote("Outro").OnClientEvent:Connect(function(pad, exitOut, players, day, coins
 	task.wait(1.3)
 	subtitle.Text = ""
 	lobbyLabel.ZIndex = 22
-	lobbyLabel.Text = "ВЫ ВЫБРАЛИСЬ ИЗ ЛАБИРИНТА!\nДней в лабиринте: " .. day .. "   ·   +" .. coins .. " монет"
+	lobbyLabel.Text = "ВЫ ВЫБРАЛИСЬ ИЗ ЛАБИРИНТА!\nДней в лабиринте: " .. info.day .. "   ·   +" .. info.coins .. " монет"
 	task.wait(4)
 	-- ждём, пока сервер вернёт нас в лобби, и только потом убираем чёрный экран
 	local waitT = os.clock()
-	while inMatch() and os.clock() - waitT < 12 do
+	while inMatch() and os.clock() - waitT < 14 do
 		task.wait(0.1)
 	end
 	local char = player.Character or player.CharacterAdded:Wait()
@@ -1215,11 +1592,21 @@ RunService.RenderStepped:Connect(function(dt)
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	local playing = inMatch() and not cutscene
 
-	-- камера
-	player.CameraMode = playing and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
-	if not playing then
-		player.CameraMaxZoomDistance = 18
+	-- камера: ранен — вид от третьего лица на своё тело
+	local isDown = player:GetAttribute("Downed") == true and inMatch()
+	player.CameraMode = (playing and not isDown) and Enum.CameraMode.LockFirstPerson or Enum.CameraMode.Classic
+	if isDown then
+		player.CameraMinZoomDistance = 9
+		player.CameraMaxZoomDistance = 16
+	else
+		player.CameraMinZoomDistance = 0.5
+		if not playing then
+			player.CameraMaxZoomDistance = 18
+		end
 	end
+	Radial.update()
+	updatePings()
+	updateMap()
 
 	-- лобби
 	titleLabel.Visible = false
@@ -1250,7 +1637,7 @@ RunService.RenderStepped:Connect(function(dt)
 	applyLighting(inMatch() and phase or nil, math.clamp(elapsed / pLen, 0, 1))
 
 	-- курсор только в меню
-	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or notePanel.Visible or cursorForced()
+	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or notePanel.Visible or Radial.isOpen() or cursorForced()
 
 	-- ранение
 	local downed = player:GetAttribute("Downed") == true
@@ -1266,7 +1653,10 @@ RunService.RenderStepped:Connect(function(dt)
 	end
 	if downed then
 		local dl = (player:GetAttribute("DownedEnd") or 0) - workspace:GetServerTimeNow()
-		downedText.Text = "ТЫ РАНЕН\nДруг может поднять тебя бинтом (зажать E рядом с тобой)\nОчнёшься у лифта через " .. formatTime(dl)
+		local pn = (player:GetAttribute("PingNext") or 0) - workspace:GetServerTimeNow()
+		downedText.Text = "ТЫ РАНЕН\nДруг может поднять тебя бинтом (E) или утащить за ногу (F)\n"
+			.. (pn > 0 and ("Сигнал снова через " .. math.ceil(pn) .. " с") or "R — позвать на помощь (друзья увидят тебя и стрелки)")
+			.. "\nОчнёшься у лифта через " .. formatTime(dl)
 	end
 	if hum and inMatch() then
 		hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
@@ -1279,7 +1669,8 @@ RunService.RenderStepped:Connect(function(dt)
 		hpFill.Size = UDim2.fromScale(math.clamp(hum.Health / hum.MaxHealth, 0, 1), 1)
 		hpText.Text = math.floor(hum.Health) .. " / " .. hum.MaxHealth
 		local moving = hum.MoveDirection.Magnitude > 0.1
-		local sprinting = playing and sprintHeld and moving and not exhausted and stamina > 0 and not crouched
+		local dragging = player:GetAttribute("Dragging") == true
+		local sprinting = playing and sprintHeld and moving and not exhausted and stamina > 0 and not crouched and not dragging
 		if sprinting then
 			stamina = math.max(0, stamina - Config.StaminaDrain * dt)
 			exhausted = stamina <= 0
@@ -1296,10 +1687,10 @@ RunService.RenderStepped:Connect(function(dt)
 		elseif crouched then
 			hum.WalkSpeed = Config.CrouchSpeed
 		else
-			hum.WalkSpeed = sprinting and sprint or Config.WalkSpeed
+			hum.WalkSpeed = (sprinting and sprint or Config.WalkSpeed) * (dragging and 0.75 or 1)
 		end
 		stFill.Size = UDim2.fromScale(stamina / staminaMax(), 1)
-		vmState.visible, vmState.moving, vmState.sprinting = playing, moving, sprinting
+		vmState.visible, vmState.moving, vmState.sprinting = playing and not downed, moving, sprinting
 
 	else
 		vmState.visible = false
@@ -1307,7 +1698,7 @@ RunService.RenderStepped:Connect(function(dt)
 
 	-- строительство
 	local eqKind = equipped and Items.Tools[equipped] and Items.Tools[equipped].Kind
-	BuildMode.update((playing and (eqKind == "blueprint" or eqKind == "hammer")) and eqKind or nil, rayParams())
+	BuildMode.update((playing and not downed and (eqKind == "blueprint" or eqKind == "hammer" or eqKind == "deploy")) and eqKind or nil, rayParams(), equipped)
 
 	-- прицел
 	cross.Visible = playing
