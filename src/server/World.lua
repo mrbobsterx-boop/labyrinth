@@ -65,15 +65,30 @@ local function node(parent, kind, pos, rng)
 	local main
 	if kind == "tree" then
 		local h = rng:NextNumber(20, 30)
-		main = Parts.box(m, "Trunk", CFrame.new(pos + V(0, h / 2, 0)), V(2.2, h, 2.2), RGB(84, 60, 40), M.Wood)
-		local leaf = RGB(rng:NextInteger(38, 58), rng:NextInteger(86, 112), rng:NextInteger(38, 52))
-		for k = 1, 5 do
-			local s = rng:NextNumber(9, 13) * (1 - k * 0.11)
-			Parts.box(m, "Leaves", CFrame.new(pos + V(rng:NextNumber(-2, 2), h * 0.55 + k * 2.8, rng:NextNumber(-2, 2))), V(s, s * 0.8, s), leaf, M.LeafyGrass, {
-				Shape = Enum.PartType.Ball,
-				CanCollide = false,
-			})
+		local bark = RGB(rng:NextInteger(74, 92), rng:NextInteger(52, 64), rng:NextInteger(34, 44))
+		main = Parts.box(m, "Trunk", CFrame.new(pos + V(0, h / 2, 0)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(2.4, h, 2.4), bark, M.Wood)
+		-- корни и пара веток
+		for k = 0, 3 do
+			local a = k / 4 * math.pi * 2 + rng:NextNumber(-0.3, 0.3)
+			Parts.box(m, "Root", CFrame.new(pos + V(math.cos(a) * 1.4, 0.5, math.sin(a) * 1.4)) * CFrame.Angles(0, -a, 0) * CFrame.Angles(0, 0, 0.5), V(2.4, 0.8, 0.9), bark, M.Wood, NOCOLLIDE)
 		end
+		for _ = 1, 2 do
+			local a = rng:NextNumber(0, math.pi * 2)
+			local y = h * rng:NextNumber(0.45, 0.65)
+			Parts.box(m, "Branch", CFrame.new(pos + V(0, y, 0)) * CFrame.Angles(0, a, 0) * CFrame.Angles(0, 0, 0.9) * CFrame.new(0, 2.2, 0), V(0.7, 4.5, 0.7), bark, M.Wood, NOCOLLIDE)
+		end
+		-- пышная крона в два тона: тёмная внутри, светлая снаружи
+		local g = rng:NextInteger(86, 112)
+		local dark = RGB(rng:NextInteger(30, 44), g - 18, rng:NextInteger(30, 40))
+		local light = RGB(rng:NextInteger(52, 70), g + 14, rng:NextInteger(40, 54))
+		Parts.box(m, "Leaves", CFrame.new(pos + V(0, h * 0.78, 0)), V(13, 10, 13), dark, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+		for k = 1, 6 do
+			local a = k / 6 * math.pi * 2 + rng:NextNumber(-0.4, 0.4)
+			local r = rng:NextNumber(3.5, 5)
+			local s = rng:NextNumber(6.5, 9)
+			Parts.box(m, "Leaves", CFrame.new(pos + V(math.cos(a) * r, h * 0.72 + rng:NextNumber(-1, 3), math.sin(a) * r)), V(s, s * 0.85, s), k % 2 == 0 and light or dark, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
+		end
+		Parts.box(m, "Leaves", CFrame.new(pos + V(rng:NextNumber(-1, 1), h * 0.95, rng:NextNumber(-1, 1))), V(8, 6.5, 8), light, M.LeafyGrass, { Shape = Enum.PartType.Ball, CanCollide = false })
 	else
 		local rock = RGB(100, 100, 104)
 		for _ = 1, 3 do

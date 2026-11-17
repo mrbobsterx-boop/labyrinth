@@ -96,7 +96,27 @@ function ItemModels.build(id, base)
 		fire.Parent = head
 		m.PrimaryPart = grip
 	end
-	if def.Kind == "blueprint" then
+	if def.Kind == "held" then
+		local grip
+		if def.Res == "key" then
+			grip = part(m, "Grip", V(1, 1.5, 0.08), base * CFrame.new(0, 0.6, 0), RGB(240, 240, 235), Enum.Material.SmoothPlastic)
+			part(m, "Stripe", V(1.02, 0.3, 0.1), base * CFrame.new(0, 1, 0), RGB(255, 200, 60), Enum.Material.Neon)
+			part(m, "Chip", V(0.35, 0.3, 0.1), base * CFrame.new(-0.2, 0.45, 0), RGB(210, 170, 60), Enum.Material.Metal)
+		elseif def.Res == "map" then
+			grip = part(m, "Grip", V(0.5, 1.6, 0.5), base * CFrame.new(0, 0.6, 0), RGB(225, 210, 170), Enum.Material.SmoothPlastic)
+			part(m, "Tie", V(0.55, 0.15, 0.55), base * CFrame.new(0, 0.6, 0), RGB(140, 50, 40), Enum.Material.Fabric)
+		elseif def.Res == "bandage" then
+			grip = part(m, "Grip", V(0.8, 0.7, 0.8), base * CFrame.new(0, 0.4, 0), RGB(235, 230, 220), Enum.Material.Fabric)
+			part(m, "Cross", V(0.82, 0.25, 0.1), base * CFrame.new(0, 0.4, -0.38), RGB(210, 40, 40), Enum.Material.SmoothPlastic)
+		else
+			grip = part(m, "Grip", V(0.5, 0.5, 0.5), base * CFrame.new(0, 0.4, 0), c, Enum.Material.SmoothPlastic)
+			for k = 0, 4 do
+				local a = k / 5 * math.pi * 2
+				part(m, "Berry", V(0.4, 0.4, 0.4), base * CFrame.new(math.cos(a) * 0.3, 0.55, math.sin(a) * 0.3), c, Enum.Material.SmoothPlastic)
+			end
+		end
+		m.PrimaryPart = grip
+	elseif def.Kind == "blueprint" then
 		-- свёрнутый синий чертёж
 		local grip = part(m, "Grip", V(0.5, 1.8, 0.5), base * CFrame.new(0, 0.5, 0), RGB(60, 100, 180), Enum.Material.Fabric)
 		part(m, "Sheet", V(0.08, 1.6, 1.4), base * CFrame.new(0.3, 0.9, -0.5), RGB(90, 140, 220), Enum.Material.SmoothPlastic)

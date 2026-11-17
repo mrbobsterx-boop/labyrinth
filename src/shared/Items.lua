@@ -31,9 +31,21 @@ Items.Tools = {
 	torch = { Name = "Факел", Kind = "torch", Tier = 0, Damage = 0, Range = 0, Color = { 255, 150, 60 } },
 	blueprint = { Name = "Чертёж (строить)", Kind = "blueprint", Tier = 0, Damage = 0, Range = 0, Color = { 70, 110, 190 } },
 	hammer = { Name = "Молоток (улучшать)", Kind = "hammer", Tier = 0, Damage = 4, Range = 10, Color = { 110, 110, 115 } },
+	-- предметы, которые можно просто держать в руке (берутся из инвентаря, если есть)
+	res_key = { Name = "Ключ-карта", Kind = "held", Res = "key", Tier = 0, Damage = 0, Range = 0, Color = { 240, 240, 235 } },
+	res_map = { Name = "Карта (ЛКМ — открыть)", Kind = "held", Res = "map", Tier = 0, Damage = 0, Range = 0, Color = { 225, 210, 170 } },
+	res_bandage = { Name = "Бинт", Kind = "held", Res = "bandage", Tier = 0, Damage = 0, Range = 0, Color = { 235, 230, 220 } },
+	res_berry = { Name = "Ягоды (ЛКМ — съесть)", Kind = "held", Res = "berry", Tier = 0, Damage = 0, Range = 0, Color = { 200, 30, 50 } },
 	deploy_workbench = { Name = "Верстак (поставить)", Kind = "deploy", Deploy = "workbench", Tier = 0, Damage = 0, Range = 0 },
 	deploy_bed = { Name = "Кровать (поставить)", Kind = "deploy", Deploy = "bed", Tier = 0, Damage = 0, Range = 0 },
 	deploy_chest = { Name = "Сундук (поставить)", Kind = "deploy", Deploy = "chest", Tier = 0, Damage = 0, Range = 0 },
+}
+
+-- Броня: надевается сама (лучшая из имеющихся), уменьшает урон
+Items.Armor = {
+	{ Id = "leather", Name = "Кожаная броня", Reduce = 0.2, Color = { 120, 82, 48 } },
+	{ Id = "iron", Name = "Железная броня", Reduce = 0.4, Color = { 170, 172, 178 } },
+	{ Id = "crystal", Name = "Кристальная броня", Reduce = 0.55, Color = { 160, 90, 240 } },
 }
 
 -- Station: nil — крафт из инвентаря (C), "bench" — нужен верстак рядом (Level — его уровень)
@@ -51,7 +63,10 @@ Items.Recipes = {
 	{ Id = "spear", Station = "bench", Level = 1, Cost = { wood = 8, stone = 3, fiber = 2 } },
 	{ Id = "stone_sword", Station = "bench", Level = 1, Cost = { wood = 4, stone = 12 } },
 	{ Id = "upgrade2", Station = "bench", Level = 1, Name = "Улучшить верстак до 2 уровня", Cost = { wood = 20, stone = 20, iron = 6 } },
+	{ Id = "armor_leather", Name = "Кожаная броня (−20% урона)", Station = "bench", Level = 1, Cost = { fiber = 10, wood = 6, fang = 1 }, Armor = 1 },
 	{ Id = "iron_pickaxe", Station = "bench", Level = 2, Cost = { wood = 6, iron = 10 } },
+	{ Id = "armor_iron", Name = "Железная броня (−40% урона)", Station = "bench", Level = 2, Cost = { iron = 14, fiber = 4 }, Armor = 2 },
+	{ Id = "armor_crystal", Name = "Кристальная броня (−55% урона)", Station = "bench", Level = 2, Cost = { crystal = 8, iron = 6, fang = 3 }, Armor = 3 },
 	{ Id = "iron_sword", Station = "bench", Level = 2, Cost = { wood = 6, iron = 14 } },
 	{ Id = "crystal_blade", Station = "bench", Level = 2, Cost = { iron = 8, crystal = 6, fang = 3 } },
 }

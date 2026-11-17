@@ -84,13 +84,19 @@ Config.Sounds = {
 	Step = "rbxasset://sounds/action_footsteps_plastic.mp3",
 }
 
--- Музыка: вставь сюда ID звука из Toolbox (вкладка Audio), например "rbxassetid://1234567890".
--- Пустая строка — без музыки.
+-- Музыка: спокойные треки по очереди, между ними тишина.
+-- Если какой-то трек не играет — замени его ID на трек из Toolbox (вкладка Audio).
 Config.Music = {
-	Lobby = "",
-	Day = "",
-	Night = "",
-	Escape = "",
+	Playlist = {
+		"rbxassetid://87225814557507", -- Midnight Chorus
+		"rbxassetid://114227963529142", -- Stellar Strings
+		"rbxassetid://76744235703007", -- Aurora's Harp
+		"rbxassetid://131749976124955", -- Twilight Crickets
+		"rbxassetid://135250174849411", -- Celestial Whispers
+		"rbxassetid://94680453165710", -- Ethereal Constellations
+	},
+	Pause = 20, -- секунд тишины между треками
+	Volume = 0.4,
 }
 
 Config.Animations = {

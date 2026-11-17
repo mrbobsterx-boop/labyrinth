@@ -34,7 +34,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
-	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -167,10 +167,86 @@ local function notifySession(s, text)
 	end
 end
 
+local updateHeld
 local function addRes(p, k, n)
 	local st = state[p]
 	st.res[k] = math.max(0, (st.res[k] or 0) + n)
 	p:SetAttribute("Res_" .. k, st.res[k])
+	-- закончился предмет, который держали в руке
+	local eq = st.equipped and Items.Tools[st.equipped]
+	if eq and eq.Kind == "held" and eq.Res == k and st.res[k] <= 0 then
+		st.equipped = nil
+		p:SetAttribute("Equipped", nil)
+		if updateHeld then
+			updateHeld(p)
+		end
+	end
+end
+
+-- броня: видна на персонаже, уменьшает урон
+local function armorVisual(p)
+	local st = state[p]
+	local char = p.Character
+	if not st or not char then
+		return
+	end
+	local old = char:FindFirstChild("ArmorModel")
+	if old then
+		old:Destroy()
+	end
+	local a = st.armor and Items.Armor[st.armor]
+	local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+	if not a or not torso then
+		return
+	end
+	local m = Instance.new("Model")
+	m.Name = "ArmorModel"
+	local col = Color3.fromRGB(a.Color[1], a.Color[2], a.Color[3])
+	local mat = st.armor == 1 and Enum.Material.Leather or (st.armor == 3 and Enum.Material.Glass or Enum.Material.Metal)
+	local function piece(partName, size, offset)
+		local base = char:FindFirstChild(partName)
+		if not base then
+			return
+		end
+		local pt = Instance.new("Part")
+		pt.Name = "Armor"
+		pt.Size = size
+		pt.Color = col
+		pt.Material = mat
+		pt.CanCollide = false
+		pt.CanQuery = false
+		pt.Massless = true
+		pt.CFrame = base.CFrame * offset
+		local w = Instance.new("WeldConstraint")
+		w.Part0 = base
+		w.Part1 = pt
+		w.Parent = pt
+		pt.Parent = m
+	end
+	piece(torso.Name, V(2.15, 1.7, 1.2), CFrame.new(0, 0.1, 0))
+	piece("Left Arm", V(1.15, 0.7, 1.15), CFrame.new(0, 0.7, 0))
+	piece("Right Arm", V(1.15, 0.7, 1.15), CFrame.new(0, 0.7, 0))
+	piece("Left Leg", V(1.1, 0.8, 1.1), CFrame.new(0, -0.2, 0))
+	piece("Right Leg", V(1.1, 0.8, 1.1), CFrame.new(0, -0.2, 0))
+	m.Parent = char
+end
+
+local function giveArmor(p, tier, silent)
+	local st = state[p]
+	if not st then
+		return
+	end
+	if (st.armor or 0) >= tier then
+		if not silent then
+			notify(p, "У тебя уже есть броня не хуже")
+		end
+		return false
+	end
+	st.armor = tier
+	p:SetAttribute("Armor", tier)
+	armorVisual(p)
+	notify(p, "Надета: " .. Items.Armor[tier].Name .. " (урон меньше на " .. math.floor(Items.Armor[tier].Reduce * 100) .. "%)")
+	return true
 end
 
 local function syncInventory(p)
@@ -185,6 +261,8 @@ end
 local function freshInventory(p)
 	local st = state[p]
 	st.res, st.tools, st.equipped, st.gotSupply = {}, { "wood_pickaxe", "wood_axe" }, nil, false
+	st.armor = nil
+	p:SetAttribute("Armor", 0)
 	local cls = profiles[p] and profiles[p].class or "none"
 	if cls == "lumber" then
 		table.insert(st.tools, "stone_axe")
@@ -227,7 +305,7 @@ local function classOf(p)
 end
 
 -- предмет в руке (виден другим игрокам)
-local function updateHeld(p)
+function updateHeld(p)
 	local st = state[p]
 	local char = p.Character
 	if not char or not st then
@@ -258,7 +336,13 @@ end
 
 R.Equip.OnServerEvent:Connect(function(p, id)
 	local st = state[p]
-	if not st or (id ~= nil and (typeof(id) ~= "string" or not table.find(st.tools, id))) then
+	if not st or (id ~= nil and typeof(id) ~= "string") then
+		return
+	end
+	local def = id and Items.Tools[id]
+	-- предмет из инвентаря (ключ-карта, карта, бинт, ягоды) можно держать, если он есть
+	local heldOk = def and def.Kind == "held" and (st.res[def.Res] or 0) > 0
+	if id ~= nil and not table.find(st.tools, id) and not heldOk then
 		return
 	end
 	st.equipped = id
@@ -520,6 +604,11 @@ local function damage(p, amount)
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if not st or not hum or st.downed then
 		return
+	end
+	-- броня уменьшает урон
+	local armor = st.armor and Items.Armor[st.armor]
+	if armor then
+		amount = amount * (1 - armor.Reduce)
 	end
 	hum.Health = math.max(1, hum.Health - amount)
 	R.Hurt:FireClient(p)
@@ -1167,6 +1256,10 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 			end
 		end
 	end
+	if r.Armor and (st.armor or 0) >= r.Armor then
+		notify(p, "У тебя уже есть броня не хуже")
+		return
+	end
 	for k, n in pairs(r.Cost) do
 		if (st.res[k] or 0) < n then
 			notify(p, "Не хватает: " .. Items.Resources[k].Name)
@@ -1203,6 +1296,8 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 		bench.model:SetAttribute("Level", 2)
 		bench.label.Text = "Верстак · ур. 2"
 		notifySession(s, p.DisplayName .. " улучшил верстак до 2 уровня!")
+	elseif r.Armor then
+		giveArmor(p, r.Armor)
 	elseif r.Res then
 		addRes(p, r.Res, r.Amount or 1)
 		notify(p, "Создано: " .. Items.Resources[r.Res].Name)
@@ -1505,6 +1600,13 @@ local function connectPrompts(s, root, chests)
 				for _ = 1, 2 do
 					local e = pool[math.random(1, #pool)]
 					gain(e[1], math.random(e[2], e[3]))
+				end
+				-- иногда в сундуке броня
+				if math.random() < 0.12 then
+					local tier = depth > 14 and 2 or 1
+					if giveArmor(p, tier, true) then
+						table.insert(got, Items.Armor[tier].Name)
+					end
 				end
 				if math.random() < 0.2 then
 					local tool = ({ "spear", "stone_sword", "torch" })[math.random(1, 3)]
@@ -2091,6 +2193,9 @@ local function onCharacter(p, char)
 		end
 	end)
 	p:SetAttribute("Crouched", false)
+	task.delay(0.5, function()
+		armorVisual(p)
+	end)
 	p:SetAttribute("Hidden", false)
 	p:SetAttribute("Sleeping", false)
 	st.hidden, st.sleeping = nil, nil
@@ -2136,8 +2241,22 @@ end)
 ------------------------------------------------------------------
 -- Тестовые кнопки
 ------------------------------------------------------------------
+-- админ-панель: код проверяется только на сервере
+local ADMIN_CODE = "2436"
+local adminTries = {}
+R.Admin.OnServerEvent:Connect(function(p, code)
+	local n = (adminTries[p] or 0) + 1
+	adminTries[p] = n
+	if n > 10 then
+		return
+	end
+	if typeof(code) == "string" and code:gsub("%s", "") == ADMIN_CODE then
+		p:SetAttribute("Admin", true)
+	end
+end)
+
 R.Dev.OnServerEvent:Connect(function(p, action, value)
-	if not Config.DevTools then
+	if not Config.DevTools or not p:GetAttribute("Admin") then
 		return
 	end
 	local s = sessionOf(p)

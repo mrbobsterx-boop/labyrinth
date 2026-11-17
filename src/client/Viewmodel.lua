@@ -134,7 +134,7 @@ function Viewmodel.swing(kind)
 		return false
 	end
 	kind = kind or kindOf()
-	if kind == "torch" or kind == "blueprint" then
+	if kind == "torch" or kind == "blueprint" or kind == "held" or kind == "deploy" then
 		return false
 	end
 	if kind == "hammer" then
@@ -250,7 +250,7 @@ local function hold(kind)
 		return CFrame.Angles(math.rad(-105), 0, 0) * CFrame.new(0, -0.15, 0)
 	elseif kind == "spear" then
 		return CFrame.Angles(math.pi, 0, 0) * CFrame.new(0, -2.6, 0)
-	elseif kind == "torch" or kind == "blueprint" then
+	elseif kind == "torch" or kind == "blueprint" or kind == "held" then
 		return CFrame.Angles(math.rad(-100), 0, 0) * CFrame.new(0, -0.3, 0)
 	elseif kind == "hammer" then
 		return CFrame.Angles(math.rad(-125), 0, 0) * CFrame.new(0, -0.6, 0)

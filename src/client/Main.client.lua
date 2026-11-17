@@ -177,6 +177,7 @@ corner(hpBack, 6)
 local hpFill = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(200, 50, 45), BorderSizePixel = 0 }, hpBack)
 corner(hpFill, 6)
 local hpText = make("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 11, TextColor3 = RGB(255, 255, 255), Text = "" }, hpBack)
+local armorText = make("TextLabel", { Position = UDim2.new(0, 288, 1, -50), Size = UDim2.new(0, 160, 0, 22), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 210, 240), TextStrokeTransparency = 0.5, Text = "" }, gui)
 local stBack = make("Frame", { Position = UDim2.new(0, 20, 1, -26), Size = UDim2.new(0, 260, 0, 6), BackgroundColor3 = RGB(30, 30, 20), BorderSizePixel = 0 }, gui)
 corner(stBack, 3)
 local stFill = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(220, 200, 120), BorderSizePixel = 0 }, stBack)
@@ -218,7 +219,7 @@ local equipped = nil
 BuildMode.init(gui, make)
 Radial.init(gui)
 local toggleMap, updateMap, updatePings
-local lobbyBar, updateMusic
+local lobbyBar, updateMusic, settingsPanel, adminPanel
 local musicOn = true
 
 local function equip(id)
@@ -231,13 +232,26 @@ local function equip(id)
 	sound(Config.Sounds.Click, 0.4, 1.4)
 end
 
+-- в хотбаре: инструменты + то, что есть в инвентаре и можно держать (ключ-карта, карта, бинт, ягоды)
+local HELD = { "res_key", "res_map", "res_bandage", "res_berry" }
+local function hotbarList()
+	local list = table.clone(tools)
+	for _, id in ipairs(HELD) do
+		local def = Items.Tools[id]
+		if (player:GetAttribute("Res_" .. def.Res) or 0) > 0 then
+			table.insert(list, id)
+		end
+	end
+	return list
+end
+
 local function refreshHotbar()
 	for _, c in ipairs(hotbar:GetChildren()) do
 		if c:IsA("TextButton") then
 			c:Destroy()
 		end
 	end
-	for i, id in ipairs(tools) do
+	for i, id in ipairs(hotbarList()) do
 		local b = make("TextButton", {
 			Size = UDim2.new(0, 96, 0, 64),
 			BackgroundColor3 = id == equipped and RGB(70, 90, 50) or RGB(18, 20, 18),
@@ -263,6 +277,10 @@ end
 player.AttributeChanged:Connect(function(name)
 	if name:sub(1, 4) == "Res_" then
 		refreshRes()
+		local k = name:sub(5)
+		if k == "key" or k == "map" or k == "bandage" or k == "berry" then
+			refreshHotbar()
+		end
 	elseif name == "Tools" then
 		local ok, list = pcall(function()
 			return HttpService:JSONDecode(player:GetAttribute("Tools") or "[]")
@@ -719,6 +737,15 @@ local function doSwing()
 		end
 		return
 	end
+	if def.Kind == "held" then
+		if def.Res == "berry" then
+			remote("Eat"):FireServer()
+			Viewmodel.swing("fists")
+		elseif def.Res == "map" then
+			toggleMap()
+		end
+		return
+	end
 	if def.Kind == "torch" or player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") or player:GetAttribute("Dragging") then
 		return -- факелом не бьют: он только светит
 	end
@@ -784,8 +811,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		refreshHotbar()
 	else
 		local n = input.KeyCode.Value - Enum.KeyCode.One.Value + 1
-		if n >= 1 and n <= 9 and tools[n] then
-			equip(tools[n])
+		local hb = hotbarList()
+		if n >= 1 and n <= 9 and hb[n] then
+			equip(hb[n])
 			refreshHotbar()
 		end
 	end
@@ -1609,30 +1637,115 @@ barButton("КАК ИГРАТЬ", "?", RGB(60, 130, 210), function()
 	noteBody.Text = "Зайди в лифт и выбери сложность.\n\nДнём врата открыты: добывай ресурсы, ищи сундуки и записки.\nНа закате вернись на поляну — ночью врата закрыты, а в лабиринте Скрежетники. Каждую ночь стены сдвигаются.\n\nНайди карту (Tab) и ключ-карту в золотом сундуке. Выход — на краю внешнего кольца.\n\nC — крафт · R — меню стройки · Ctrl — пролезть в щель."
 	notePanel.Visible = true
 end)
-barButton("МУЗЫКА", "♪", RGB(70, 160, 90), function(t)
-	musicOn = not musicOn
-	t.Text = musicOn and "МУЗЫКА" or "МУЗЫКА: ВЫКЛ"
+barButton("НАСТРОЙКИ", "⚙", RGB(90, 96, 110), function()
+	settingsPanel.Visible = not settingsPanel.Visible
 end)
 
--- музыка: своя для лобби, дня и ночи (ID задаются в Config.Music)
-local tracks = {}
-for k, id in pairs(Config.Music or {}) do
-	if id ~= "" then
-		tracks[k] = make("Sound", { SoundId = id, Looped = true, Volume = 0 }, SoundService)
-		tracks[k]:Play()
+-- настройки: музыка, громкость, вход в админ-панель
+local musicVolume = Config.Music.Volume or 0.4
+settingsPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 300), BackgroundColor3 = RGB(24, 26, 30), BackgroundTransparency = 0.05, Visible = false, ZIndex = 16 }, gui)
+corner(settingsPanel, 14)
+make("UIStroke", { Color = RGB(120, 130, 150), Thickness = 2 }, settingsPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 28, TextColor3 = RGB(240, 240, 235), Text = "НАСТРОЙКИ", ZIndex = 17 }, settingsPanel)
+local function sBtn(text, pos, size, color, fn)
+	local b = make("TextButton", { Position = pos, Size = size, BackgroundColor3 = color, Font = UI_FONT, TextSize = 17, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 17, AutoButtonColor = true }, settingsPanel)
+	corner(b, 10)
+	b.MouseButton1Click:Connect(function()
+		sound(Config.Sounds.Click, 0.4, 1)
+		fn(b)
+	end)
+	return b
+end
+sBtn("Музыка: ВКЛ", UDim2.fromOffset(30, 58), UDim2.fromOffset(320, 44), RGB(60, 140, 80), function(b)
+	musicOn = not musicOn
+	b.Text = musicOn and "Музыка: ВКЛ" or "Музыка: ВЫКЛ"
+	b.BackgroundColor3 = musicOn and RGB(60, 140, 80) or RGB(110, 60, 60)
+end)
+local volLabel = make("TextLabel", { Position = UDim2.fromOffset(100, 112), Size = UDim2.fromOffset(180, 44), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 18, TextColor3 = RGB(230, 230, 230), Text = "", ZIndex = 17 }, settingsPanel)
+local function showVol()
+	volLabel.Text = "Громкость: " .. math.floor(musicVolume * 100 + 0.5) .. "%"
+end
+showVol()
+sBtn("−", UDim2.fromOffset(30, 112), UDim2.fromOffset(60, 44), RGB(70, 76, 90), function()
+	musicVolume = math.max(0, musicVolume - 0.1)
+	showVol()
+end)
+sBtn("+", UDim2.fromOffset(290, 112), UDim2.fromOffset(60, 44), RGB(70, 76, 90), function()
+	musicVolume = math.min(1, musicVolume + 0.1)
+	showVol()
+end)
+sBtn("Админ-панель", UDim2.fromOffset(30, 170), UDim2.fromOffset(320, 44), RGB(150, 90, 40), function()
+	settingsPanel.Visible = false
+	adminPanel.Visible = true
+end)
+sBtn("Закрыть", UDim2.fromOffset(110, 236), UDim2.fromOffset(160, 44), RGB(90, 40, 30), function()
+	settingsPanel.Visible = false
+end)
+
+-- вход в админ-панель по коду (проверяет сервер)
+adminPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 240), BackgroundColor3 = RGB(24, 26, 30), Visible = false, ZIndex = 18 }, gui)
+corner(adminPanel, 14)
+make("UIStroke", { Color = RGB(200, 140, 60), Thickness = 2 }, adminPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 12), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(255, 210, 140), Text = "Доступ к админ-панели", ZIndex = 19 }, adminPanel)
+local codeBox = make("TextBox", { Position = UDim2.fromOffset(60, 60), Size = UDim2.fromOffset(260, 50), BackgroundColor3 = RGB(40, 44, 50), Font = Enum.Font.GothamBlack, TextSize = 28, TextColor3 = RGB(255, 255, 255), PlaceholderText = "Введите код", PlaceholderColor3 = RGB(140, 140, 150), Text = "", ClearTextOnFocus = true, ZIndex = 19 }, adminPanel)
+corner(codeBox, 10)
+local adminMsg = make("TextLabel", { Position = UDim2.fromOffset(0, 116), Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextColor3 = RGB(255, 120, 110), Text = "", ZIndex = 19 }, adminPanel)
+local function aBtn(text, x, color, fn)
+	local b = make("TextButton", { Position = UDim2.fromOffset(x, 160), Size = UDim2.fromOffset(150, 46), BackgroundColor3 = color, Font = UI_FONT, TextSize = 17, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 19 }, adminPanel)
+	corner(b, 10)
+	b.MouseButton1Click:Connect(fn)
+end
+aBtn("Войти", 30, RGB(60, 140, 80), function()
+	remote("Admin"):FireServer(codeBox.Text)
+	adminMsg.Text = "Проверяю..."
+	task.delay(1, function()
+		if player:GetAttribute("Admin") then
+			adminPanel.Visible = false
+			notify("Добро пожаловать в админ-панель!")
+		else
+			adminMsg.Text = "Неверный код"
+		end
+	end)
+end)
+aBtn("Отмена", 200, RGB(90, 40, 30), function()
+	adminPanel.Visible = false
+end)
+
+-- музыка: спокойный плейлист по кругу, между треками — тишина
+local playlist = table.clone(Config.Music.Playlist or {})
+local musicSound = make("Sound", { Volume = 0, Looped = false }, SoundService)
+local musicIndex = 0
+local nextTrackAt = os.clock() + 3
+musicSound.Ended:Connect(function()
+	nextTrackAt = os.clock() + (Config.Music.Pause or 20)
+end)
+local function nextTrack()
+	if #playlist == 0 then
+		return
 	end
+	-- каждый раз в случайном порядке, без повтора подряд
+	local k
+	repeat
+		k = math.random(1, #playlist)
+	until #playlist == 1 or k ~= musicIndex
+	musicIndex = k
+	musicSound.SoundId = playlist[k]
+	musicSound.TimePosition = 0
+	musicSound:Play()
+	-- трек не загрузился (закрыт) — через паузу пробуем следующий
+	task.delay(8, function()
+		if musicSound.SoundId == playlist[k] and not musicSound.IsPlaying and musicSound.TimeLength == 0 then
+			nextTrackAt = os.clock() + 2
+		end
+	end)
 end
 function updateMusic(dt)
-	local want = "Lobby"
-	if cutscene then
-		want = "Escape"
-	elseif inMatch() then
-		want = (player:GetAttribute("Phase") == "night") and "Night" or "Day"
+	if not musicSound.IsPlaying and nextTrackAt and os.clock() >= nextTrackAt then
+		nextTrackAt = nil
+		nextTrack()
 	end
-	for k, snd in pairs(tracks) do
-		local target = (musicOn and k == want) and 0.45 or 0
-		snd.Volume = snd.Volume + (target - snd.Volume) * math.min(1, (dt or 0.016) * 1.5)
-	end
+	local target = musicOn and musicVolume * (player:GetAttribute("Phase") == "night" and inMatch() and 0.7 or 1) or 0
+	musicSound.Volume = musicSound.Volume + (target - musicSound.Volume) * math.min(1, (dt or 0.016) * 2)
 end
 
 -- сон и укрытие в лианах
@@ -1739,7 +1852,7 @@ RunService.RenderStepped:Connect(function(dt)
 	applyLighting(inMatch() and phase or nil, math.clamp(elapsed / pLen, 0, 1))
 
 	-- курсор только в меню
-	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or notePanel.Visible or Radial.isOpen() or cursorForced()
+	UserInputService.MouseIconEnabled = not playing or craft.Visible or shopPanel.Visible or notePanel.Visible or Radial.isOpen() or settingsPanel.Visible or adminPanel.Visible or cursorForced()
 
 	-- ранение
 	local downed = player:GetAttribute("Downed") == true
@@ -1770,6 +1883,9 @@ RunService.RenderStepped:Connect(function(dt)
 	if hum then
 		hpFill.Size = UDim2.fromScale(math.clamp(hum.Health / hum.MaxHealth, 0, 1), 1)
 		hpText.Text = math.floor(hum.Health) .. " / " .. hum.MaxHealth
+		local ar = Items.Armor[player:GetAttribute("Armor") or 0]
+		armorText.Visible = inMatch()
+		armorText.Text = ar and ("🛡 " .. ar.Name) or ""
 		local moving = hum.MoveDirection.Magnitude > 0.1
 		local dragging = player:GetAttribute("Dragging") == true
 		local sprinting = playing and sprintHeld and moving and not exhausted and stamina > 0 and not crouched and not dragging
@@ -1853,6 +1969,11 @@ end)
 ------------------------------------------------------------------
 if Config.DevTools then
 	local bar = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 60), Size = UDim2.new(0, 190, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, gui)
+	-- админ-кнопки видны только после ввода кода в Настройки → Админ-панель
+	bar.Visible = player:GetAttribute("Admin") == true
+	player:GetAttributeChangedSignal("Admin"):Connect(function()
+		bar.Visible = player:GetAttribute("Admin") == true
+	end)
 	make("UIListLayout", { Padding = UDim.new(0, 5) }, bar)
 	local function btn(text, fn)
 		local b = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(30, 30, 34), BackgroundTransparency = 0.25, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(230, 230, 230), Text = text }, bar)
@@ -1963,7 +2084,7 @@ if Config.DevTools then
 		remote("Dev"):FireServer("down")
 	end)
 	UserInputService.InputBegan:Connect(function(input, processed)
-		if processed then
+		if processed or not player:GetAttribute("Admin") then
 			return
 		end
 		if input.KeyCode == Enum.KeyCode.M then
@@ -1981,8 +2102,8 @@ if Config.DevTools then
 	end)
 end
 
--- подсказка управления
-make("TextLabel", {
+-- подсказка управления (на телефоне не нужна)
+local keysHint = make("TextLabel", {
 	AnchorPoint = Vector2.new(1, 1),
 	Position = UDim2.new(1, -16, 1, -14),
 	Size = UDim2.new(0, 760, 0, 20),
@@ -1991,5 +2112,80 @@ make("TextLabel", {
 	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Right,
 	TextColor3 = RGB(200, 195, 180),
-	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды",
+	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню · Tab — карта",
 }, gui)
+
+------------------------------------------------------------------
+-- Телефон и планшет: интерфейс подстраивается под экран, кнопки на экране
+------------------------------------------------------------------
+local uiScale = make("UIScale", {}, gui)
+local function rescale()
+	local vp = workspace.CurrentCamera.ViewportSize
+	uiScale.Scale = math.clamp(math.min(vp.X / 1280, vp.Y / 760), 0.55, 1)
+end
+rescale()
+workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
+
+local isTouch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+keysHint.Visible = not isTouch
+if isTouch then
+	local pad = make("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -24, 1, -190), Size = UDim2.fromOffset(250, 330), BackgroundTransparency = 1 }, gui)
+	local function tbtn(text, pos, size, color, fn)
+		local b = make("TextButton", { AnchorPoint = Vector2.new(0.5, 0.5), Position = pos, Size = size, BackgroundColor3 = color, BackgroundTransparency = 0.25, Font = Enum.Font.GothamBlack, TextSize = 15, TextWrapped = true, TextColor3 = RGB(255, 255, 255), Text = text }, pad)
+		corner(b, 100)
+		make("UIStroke", { Color = RGB(255, 255, 255), Thickness = 2, Transparency = 0.4 }, b)
+		b.Activated:Connect(function()
+			fn(b)
+		end)
+		return b
+	end
+	-- большая кнопка удара/действия
+	tbtn("УДАР", UDim2.fromOffset(185, 270), UDim2.fromOffset(110, 110), RGB(190, 60, 50), function()
+		doSwing()
+	end)
+	local sprintB
+	sprintB = tbtn("БЕГ", UDim2.fromOffset(70, 290), UDim2.fromOffset(70, 70), RGB(70, 110, 160), function()
+		sprintHeld = not sprintHeld
+		sprintB.BackgroundColor3 = sprintHeld and RGB(80, 170, 90) or RGB(70, 110, 160)
+	end)
+	tbtn("ПРИСЕСТЬ", UDim2.fromOffset(70, 205), UDim2.fromOffset(70, 70), RGB(90, 90, 100), function()
+		if inMatch() and not cutscene then
+			setCrouch(not crouched)
+		end
+	end)
+	tbtn("КРАФТ", UDim2.fromOffset(150, 170), UDim2.fromOffset(66, 66), RGB(150, 110, 50), function()
+		if inMatch() and not cutscene then
+			openHandCraft()
+		end
+	end)
+	tbtn("МЕНЮ", UDim2.fromOffset(225, 160), UDim2.fromOffset(66, 66), RGB(110, 80, 160), function()
+		if not inMatch() or cutscene then
+			return
+		end
+		local kind = equipped and Items.Tools[equipped] and Items.Tools[equipped].Kind
+		if player:GetAttribute("Downed") then
+			remote("Ping"):FireServer()
+		elseif kind == "blueprint" then
+			BuildMode.pieceMenu(Radial)
+		elseif kind == "hammer" then
+			BuildMode.hammerMenu(Radial, remote("Upgrade"))
+		elseif kind == "deploy" then
+			BuildMode.rotate()
+		end
+	end)
+	tbtn("КАРТА", UDim2.fromOffset(150, 95), UDim2.fromOffset(60, 60), RGB(60, 130, 90), function()
+		if inMatch() and not cutscene then
+			toggleMap()
+		end
+	end)
+	tbtn("ЕДА", UDim2.fromOffset(225, 85), UDim2.fromOffset(60, 60), RGB(170, 50, 80), function()
+		remote("Eat"):FireServer()
+	end)
+	tbtn("УБРАТЬ", UDim2.fromOffset(70, 120), UDim2.fromOffset(60, 60), RGB(70, 70, 76), function()
+		equip(nil)
+		refreshHotbar()
+	end)
+	RunService.RenderStepped:Connect(function()
+		pad.Visible = inMatch() and not cutscene
+	end)
+end
