@@ -28,10 +28,10 @@ for i, p in ipairs(Building.Pieces) do
 end
 
 Building.Tiers = {
-	[0] = { Name = "Чертёж", Color = RGB(205, 180, 125), Material = Enum.Material.WoodPlanks, HP = 40 },
-	[1] = { Name = "Дерево", Color = RGB(118, 82, 50), Material = Enum.Material.WoodPlanks, HP = 150, Cost = { wood = 6 } },
-	[2] = { Name = "Камень", Color = RGB(128, 128, 124), Material = Enum.Material.Slate, HP = 400, Cost = { stone = 8 } },
-	[3] = { Name = "Металл", Color = RGB(92, 96, 102), Material = Enum.Material.DiamondPlate, HP = 900, Cost = { iron = 4 } },
+	[0] = { Name = "Чертёж", Color = RGB(214, 190, 136), Material = Enum.Material.WoodPlanks, HP = 40, Frame = RGB(160, 124, 78), FrameMat = Enum.Material.Wood },
+	[1] = { Name = "Дерево", Color = RGB(150, 104, 62), Material = Enum.Material.WoodPlanks, HP = 150, Cost = { wood = 6 }, Frame = RGB(84, 56, 32), FrameMat = Enum.Material.Wood },
+	[2] = { Name = "Камень", Color = RGB(146, 142, 132), Material = Enum.Material.Cobblestone, HP = 400, Cost = { stone = 8 }, Frame = RGB(104, 100, 94), FrameMat = Enum.Material.Slate },
+	[3] = { Name = "Металл", Color = RGB(112, 118, 126), Material = Enum.Material.DiamondPlate, HP = 900, Cost = { iron = 4 }, Frame = RGB(62, 66, 72), FrameMat = Enum.Material.Metal },
 }
 
 -- CFrame детали по параметрам привязки

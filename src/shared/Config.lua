@@ -8,8 +8,10 @@ Config.GameTitle = "ЛАБИРИНТ"
 Config.DevTools = true
 
 Config.Maze = {
-	Cells = 45, -- сетка 45 x 45 клеток, но лабиринт круглый (как в фильме)
-	Radius = 22.4, -- радиус круга в клетках (≈ 1430 studs в поперечнике)
+	Cells = 61, -- сетка 61 x 61 клеток, лабиринт круглый (как в фильме)
+	Radius = 17, -- внутренний круг (обычные коридоры), в клетках
+	OuterRadius = 29, -- внешнее кольцо: коридоры вдвое шире, стены выше (≈ 1850 studs в поперечнике)
+	OuterWallHeight = 92,
 	CellSize = 32, -- ширина коридора
 	WallHeight = 56,
 	WallThickness = 4,
@@ -80,6 +82,15 @@ Config.Sounds = {
 	Hurt = "rbxasset://sounds/uuhhh.mp3",
 	Rumble = "rbxasset://sounds/action_falling.mp3",
 	Step = "rbxasset://sounds/action_footsteps_plastic.mp3",
+}
+
+-- Музыка: вставь сюда ID звука из Toolbox (вкладка Audio), например "rbxassetid://1234567890".
+-- Пустая строка — без музыки.
+Config.Music = {
+	Lobby = "",
+	Day = "",
+	Night = "",
+	Escape = "",
 }
 
 Config.Animations = {

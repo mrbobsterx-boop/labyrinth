@@ -218,6 +218,8 @@ local equipped = nil
 BuildMode.init(gui, make)
 Radial.init(gui)
 local toggleMap, updateMap, updatePings
+local lobbyBar, updateMusic
+local musicOn = true
 
 local function equip(id)
 	if id == equipped then
@@ -1105,31 +1107,32 @@ local function walkPath(cam, points, duration, opts)
 end
 
 -- ролик у выхода: туннель → мост над пропастью → дверь лаборатории и считыватель
-remote("ExitIntro").OnClientEvent:Connect(function(exitOut, doorFront, readerPos)
+remote("ExitIntro").OnClientEvent:Connect(function(pts, readerPos)
 	cutscene = true
 	craft.Visible = false
 	Radial.close()
 	local cam = workspace.CurrentCamera
 	cam.CameraType = Enum.CameraType.Scriptable
-	local b = exitOut
-	subtitle.Text = "Туннель... В самом конце — свет."
-	walkPath(cam, { (b * CFrame.new(0, 5, -4)).Position, (b * CFrame.new(0, 5, -66)).Position }, 4.6)
-	subtitle.Text = "Пропасть... Не смотри вниз. Только по мосту."
-	walkPath(cam, { (b * CFrame.new(0, 5, -66)).Position, (b * CFrame.new(0, 5.3, -108)).Position }, 4, {
+	local fwd = ((pts[3] - pts[1]) * V(1, 0, 1)).Unit
+	local right = fwd:Cross(V(0, 1, 0))
+	subtitle.Text = "Выход... Огромный проход — и сразу пропасть."
+	walkPath(cam, { pts[1], pts[2] }, 1.8)
+	subtitle.Text = "Не смотри вниз. Только по мосту."
+	walkPath(cam, { pts[2], pts[3] }, 3.4, {
 		stepGap = 0.6,
 		stepPitch = 0.55,
 		lookAt = function(a, pos)
-			local down = math.sin(math.clamp((a - 0.15) / 0.5, 0, 1) * math.pi) * 9
-			return pos + b.LookVector * 10 - V(0, down, 0) + b.RightVector * math.sin(a * 6) * 1.5
+			local down = math.sin(math.clamp((a - 0.1) / 0.5, 0, 1) * math.pi) * 9
+			return pos + fwd * 10 - V(0, down, 0) + right * math.sin(a * 6) * 1.5
 		end,
 	})
-	local eye = (b * CFrame.new(0, 5.3, -108)).Position
-	local fromLook = eye + b.LookVector * 10
+	local eye = pts[3]
+	local fromLook = eye + fwd * 10
 	subtitle.Text = "Дверь... и считыватель. Ключ-карта! Нужно приложить ключ-карту."
 	runFor(1.2, function(a)
 		cam.CFrame = CFrame.lookAt(eye, fromLook:Lerp(readerPos, smoothstep(a)))
 	end)
-	task.wait(1.4)
+	task.wait(1.2)
 	subtitle.Text = ""
 	cam.CameraType = Enum.CameraType.Custom
 	local char = player.Character
@@ -1139,7 +1142,6 @@ remote("ExitIntro").OnClientEvent:Connect(function(exitOut, doorFront, readerPos
 	end
 	cutscene = false
 	notify("Достань ключ-карту и приложи к считывателю (E). Ключ-карта — в золотом сундуке.")
-	local _ = doorFront
 end)
 
 -- достаём ключ-карту из кармана и прикладываем к считывателю
@@ -1202,7 +1204,7 @@ remote("Outro").OnClientEvent:Connect(function(info)
 	end
 
 	-- 1. дверь лаборатории поднимается
-	local eye0 = (b * CFrame.new(0, 5.3, -106)).Position
+	local eye0 = info.doorEye
 	subtitle.Text = "Дверь открывается..."
 	runFor(3, function()
 		cam.CFrame = CFrame.lookAt(eye0, info.labStart.Position) * CFrame.Angles(math.noise(os.clock() * 3) * 0.008, 0, 0)
@@ -1396,19 +1398,59 @@ local function applyLighting(phase, a)
 	end
 end
 
--- монеты и класс (в лобби)
+-- монеты (в лобби): золотая монета с гравировкой Скрежетника и счётчик
+local coinWidget = make("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 18, 1, -18), Size = UDim2.fromOffset(330, 110), BackgroundTransparency = 1 }, gui)
+local coin = make("Frame", { Size = UDim2.fromOffset(104, 104), BackgroundColor3 = RGB(232, 182, 60) }, coinWidget)
+corner(coin, 100)
+make("UIStroke", { Color = RGB(140, 96, 24), Thickness = 4 }, coin)
+make("UIGradient", { Rotation = 45, Color = ColorSequence.new(RGB(255, 228, 130), RGB(196, 140, 40)) }, coin)
+local inner = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(80, 80), BackgroundTransparency = 1 }, coin)
+corner(inner, 100)
+make("UIStroke", { Color = RGB(176, 124, 34), Thickness = 2 }, inner)
+-- гравировка: тело-слизень, жало и восемь ног — одним цветом, как на старой монете
+local ENG = RGB(150, 104, 28)
+local function engr(pos, size, rot, round)
+	local f = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = pos, Size = size, Rotation = rot or 0, BackgroundColor3 = ENG, BorderSizePixel = 0 }, coin)
+	if round then
+		corner(f, 100)
+	end
+	return f
+end
+engr(UDim2.fromOffset(52, 56), UDim2.fromOffset(40, 22), 0, true)
+engr(UDim2.fromOffset(32, 54), UDim2.fromOffset(14, 14), 0, true)
+for k, x in ipairs({ 38, 46, 56, 64 }) do
+	local tilt = (k - 2.5) * 12
+	engr(UDim2.fromOffset(x, 44), UDim2.fromOffset(3, 16), -25 + tilt, false)
+	engr(UDim2.fromOffset(x - 3, 37), UDim2.fromOffset(3, 12), 30 + tilt, false)
+	engr(UDim2.fromOffset(x, 68), UDim2.fromOffset(3, 16), 25 - tilt, false)
+	engr(UDim2.fromOffset(x - 3, 75), UDim2.fromOffset(3, 12), -30 - tilt, false)
+end
+engr(UDim2.fromOffset(74, 46), UDim2.fromOffset(4, 16), 40, false)
+engr(UDim2.fromOffset(78, 36), UDim2.fromOffset(4, 12), 0, false)
+engr(UDim2.fromOffset(75, 29), UDim2.fromOffset(4, 8), -50, false)
 local coinsLabel = make("TextLabel", {
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -220, 0, 16),
-	Size = UDim2.new(0, 360, 0, 32),
-	BackgroundColor3 = RGB(20, 18, 14),
-	BackgroundTransparency = 0.3,
+	Position = UDim2.fromOffset(116, 14),
+	Size = UDim2.fromOffset(210, 50),
+	BackgroundTransparency = 1,
+	Font = Enum.Font.FredokaOne,
+	TextSize = 44,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = RGB(255, 222, 110),
+	TextStrokeTransparency = 0,
+	TextStrokeColor3 = RGB(90, 60, 10),
+	Text = "0",
+}, coinWidget)
+local classLabel = make("TextLabel", {
+	Position = UDim2.fromOffset(118, 62),
+	Size = UDim2.fromOffset(210, 24),
+	BackgroundTransparency = 1,
 	Font = UI_FONT,
 	TextSize = 16,
-	TextColor3 = RGB(255, 215, 100),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextColor3 = RGB(240, 235, 220),
+	TextStrokeTransparency = 0.4,
 	Text = "",
-}, gui)
-corner(coinsLabel, 8)
+}, coinWidget)
 
 -- окно лифта
 local liftPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.45, 0), Size = UDim2.new(0, 460, 0, 230), BackgroundColor3 = RGB(18, 20, 22), BackgroundTransparency = 0.15, Visible = false }, gui)
@@ -1536,6 +1578,63 @@ remote("Note").OnClientEvent:Connect(function(title, text)
 	sound(Config.Sounds.Click, 0.4, 0.7)
 end)
 
+-- нижняя панель лобби: большие кнопки с картинками
+lobbyBar = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14), Size = UDim2.fromOffset(460, 120), BackgroundColor3 = RGB(20, 20, 24), BackgroundTransparency = 0.35 }, gui)
+corner(lobbyBar, 16)
+make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 14) }, lobbyBar)
+local function barButton(title, icon, color, fn)
+	local b = make("TextButton", { Size = UDim2.fromOffset(130, 104), BackgroundTransparency = 1, Text = "" }, lobbyBar)
+	local ic = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.fromOffset(72, 72), BackgroundColor3 = color, Font = Enum.Font.FredokaOne, TextSize = 40, TextColor3 = RGB(255, 255, 255), TextStrokeTransparency = 0.2, Text = icon }, b)
+	corner(ic, 18)
+	make("UIStroke", { Color = RGB(255, 255, 255), Thickness = 3, Transparency = 0.3 }, ic)
+	local t = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0), Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 15, TextColor3 = RGB(255, 255, 255), TextStrokeTransparency = 0.3, Text = title }, b)
+	b.MouseEnter:Connect(function()
+		TweenService:Create(ic, TweenInfo.new(0.12), { Size = UDim2.fromOffset(80, 80) }):Play()
+	end)
+	b.MouseLeave:Connect(function()
+		TweenService:Create(ic, TweenInfo.new(0.12), { Size = UDim2.fromOffset(72, 72) }):Play()
+	end)
+	b.MouseButton1Click:Connect(function()
+		sound(Config.Sounds.Click, 0.5, 1)
+		fn(t)
+	end)
+	return b
+end
+barButton("КЛАССЫ", "⚔", RGB(200, 70, 60), function()
+	renderShop()
+	shopPanel.Visible = true
+end)
+barButton("КАК ИГРАТЬ", "?", RGB(60, 130, 210), function()
+	noteTitle.Text = "Как выжить в лабиринте"
+	noteBody.Text = "Зайди в лифт и выбери сложность.\n\nДнём врата открыты: добывай ресурсы, ищи сундуки и записки.\nНа закате вернись на поляну — ночью врата закрыты, а в лабиринте Скрежетники. Каждую ночь стены сдвигаются.\n\nНайди карту (Tab) и ключ-карту в золотом сундуке. Выход — на краю внешнего кольца.\n\nC — крафт · R — меню стройки · Ctrl — пролезть в щель."
+	notePanel.Visible = true
+end)
+barButton("МУЗЫКА", "♪", RGB(70, 160, 90), function(t)
+	musicOn = not musicOn
+	t.Text = musicOn and "МУЗЫКА" or "МУЗЫКА: ВЫКЛ"
+end)
+
+-- музыка: своя для лобби, дня и ночи (ID задаются в Config.Music)
+local tracks = {}
+for k, id in pairs(Config.Music or {}) do
+	if id ~= "" then
+		tracks[k] = make("Sound", { SoundId = id, Looped = true, Volume = 0 }, SoundService)
+		tracks[k]:Play()
+	end
+end
+function updateMusic(dt)
+	local want = "Lobby"
+	if cutscene then
+		want = "Escape"
+	elseif inMatch() then
+		want = (player:GetAttribute("Phase") == "night") and "Night" or "Day"
+	end
+	for k, snd in pairs(tracks) do
+		local target = (musicOn and k == want) and 0.45 or 0
+		snd.Volume = snd.Volume + (target - snd.Volume) * math.min(1, (dt or 0.016) * 1.5)
+	end
+end
+
 -- сон и укрытие в лианах
 local restPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(0, 0, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 5 }, gui)
 local restText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.75), Size = UDim2.new(0.8, 0, 0, 60), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 22, TextColor3 = RGB(230, 235, 220), TextStrokeTransparency = 0.4, Text = "", ZIndex = 5 }, restPanel)
@@ -1614,8 +1713,11 @@ RunService.RenderStepped:Connect(function(dt)
 		lobbyLabel.Text = ""
 	end
 	updateLiftPanel()
-	coinsLabel.Visible = not inMatch()
-	coinsLabel.Text = "🪙 " .. (player:GetAttribute("Coins") or 0) .. "  ·  класс: " .. className(player:GetAttribute("Class"))
+	coinWidget.Visible = not inMatch() and not cutscene
+	lobbyBar.Visible = coinWidget.Visible
+	coinsLabel.Text = tostring(player:GetAttribute("Coins") or 0)
+	classLabel.Text = "Класс: " .. className(player:GetAttribute("Class"))
+	updateMusic(dt)
 
 	-- фаза дня (у каждой группы своя)
 	phaseLabel.Visible = inMatch()

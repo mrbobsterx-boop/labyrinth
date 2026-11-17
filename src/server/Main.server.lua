@@ -1534,8 +1534,8 @@ local function connectExit(s)
 		if hrp then
 			hrp.Anchored = true
 		end
-		R.ExitIntro:FireClient(p, ex.exitOut, ex.doorFront, ex.reader.Position)
-		task.delay(10, function()
+		R.ExitIntro:FireClient(p, ex.introPts, ex.reader.Position)
+		task.delay(7.5, function()
 			if st.session == s and not s.won then
 				place(p, ex.doorFront, false)
 			end
@@ -1577,6 +1577,7 @@ local function connectExit(s)
 				R.Outro:FireClient(q, {
 					exitOut = ex.exitOut,
 					doorFront = ex.doorFront,
+					doorEye = ex.doorEye,
 					labStart = ex.labStart,
 					labEnd = ex.labEnd,
 					backDoor = ex.labBackDoor,

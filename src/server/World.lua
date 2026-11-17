@@ -18,9 +18,9 @@ local M = Enum.Material
 
 local MZ = Config.Maze
 local N, C = MZ.Cells, MZ.CellSize
-local MID = (N - 1) / 2
+local MID = (N - 1) // 2
 local HALF = N * C / 2
-local CLEAR_LO, CLEAR_HI = MID - (MZ.ClearingCells - 1) / 2, MID + (MZ.ClearingCells - 1) / 2
+local CLEAR_LO, CLEAR_HI = MID - (MZ.ClearingCells - 1) // 2, MID + (MZ.ClearingCells - 1) // 2
 local CLEAR_HALF = MZ.ClearingCells * C / 2
 
 World.LOBBY = V(0, 50, 0)
@@ -34,21 +34,8 @@ local WOOD = RGB(92, 64, 40)
 local METAL = RGB(70, 72, 76)
 local NOCOLLIDE = { CanCollide = false }
 
-local function cellPos(O, i, j)
-	return O + V((i - MID) * C, 0, (j - MID) * C)
-end
-
 local function inClearing(i, j)
 	return i >= CLEAR_LO and i <= CLEAR_HI and j >= CLEAR_LO and j <= CLEAR_HI
-end
-
--- клетка внутри круга лабиринта (и не на поляне)
-local function inMaze(i, j)
-	if i < 0 or j < 0 or i >= N or j >= N or inClearing(i, j) then
-		return false
-	end
-	local di, dj = i - MID, j - MID
-	return di * di + dj * dj <= MZ.Radius * MZ.Radius
 end
 
 local function tag(inst, name)
@@ -151,9 +138,10 @@ end
 local function classicNPC(parent, cf, name)
 	local m = Instance.new("Model")
 	m.Name = name
-	local yellow, blue, green = RGB(245, 205, 48), RGB(13, 105, 172), RGB(40, 127, 71)
-	local torso = Parts.box(m, "Torso", cf * CFrame.new(0, 3, 0), V(2, 2, 1), blue, M.SmoothPlastic)
-	local head = Parts.box(m, "Head", cf * CFrame.new(0, 4.5, 0), V(2, 1, 1), yellow, M.SmoothPlastic)
+	-- торговец-путешественник: шляпа-сафари, рубашка цвета хаки, жилет, ремень, рюкзак
+	local skin, khaki, vest, pants = RGB(245, 205, 48), RGB(196, 170, 112), RGB(120, 92, 58), RGB(92, 74, 52)
+	local torso = Parts.box(m, "Torso", cf * CFrame.new(0, 3, 0), V(2, 2, 1), khaki, M.Fabric)
+	local head = Parts.box(m, "Head", cf * CFrame.new(0, 4.5, 0), V(2, 1, 1), skin, M.SmoothPlastic)
 	local mesh = Instance.new("SpecialMesh")
 	mesh.MeshType = Enum.MeshType.Head
 	mesh.Scale = V(1.25, 1.25, 1.25)
@@ -163,10 +151,30 @@ local function classicNPC(parent, cf, name)
 	face.Texture = "rbxasset://textures/face.png"
 	face.Face = Enum.NormalId.Front
 	face.Parent = head
-	Parts.box(m, "Left Arm", cf * CFrame.new(-1.5, 3, 0), V(1, 2, 1), yellow, M.SmoothPlastic)
-	Parts.box(m, "Right Arm", cf * CFrame.new(1.5, 3, 0), V(1, 2, 1), yellow, M.SmoothPlastic)
-	Parts.box(m, "Left Leg", cf * CFrame.new(-0.5, 1, 0), V(1, 2, 1), green, M.SmoothPlastic)
-	Parts.box(m, "Right Leg", cf * CFrame.new(0.5, 1, 0), V(1, 2, 1), green, M.SmoothPlastic)
+	Parts.box(m, "Left Arm", cf * CFrame.new(-1.5, 3, 0), V(1, 2, 1), khaki, M.Fabric)
+	Parts.box(m, "Right Arm", cf * CFrame.new(1.5, 3, 0), V(1, 2, 1), khaki, M.Fabric)
+	Parts.box(m, "LeftHand", cf * CFrame.new(-1.5, 2.2, 0), V(1.02, 0.5, 1.02), skin, M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "RightHand", cf * CFrame.new(1.5, 2.2, 0), V(1.02, 0.5, 1.02), skin, M.SmoothPlastic, NOCOLLIDE)
+	Parts.box(m, "Left Leg", cf * CFrame.new(-0.5, 1, 0), V(1, 2, 1), pants, M.Fabric)
+	Parts.box(m, "Right Leg", cf * CFrame.new(0.5, 1, 0), V(1, 2, 1), pants, M.Fabric)
+	for _, x in ipairs({ -0.5, 0.5 }) do
+		Parts.box(m, "Boot", cf * CFrame.new(x, 0.35, -0.05), V(1.05, 0.7, 1.15), RGB(60, 40, 28), M.Leather, NOCOLLIDE)
+	end
+	-- жилет с карманами, ремень с пряжкой
+	Parts.box(m, "Vest", cf * CFrame.new(0, 3.1, 0), V(2.06, 1.8, 1.06), vest, M.Leather, NOCOLLIDE)
+	Parts.box(m, "VestOpen", cf * CFrame.new(0, 3.1, -0.54), V(0.6, 1.8, 0.04), khaki, M.Fabric, NOCOLLIDE)
+	for _, x in ipairs({ -0.65, 0.65 }) do
+		Parts.box(m, "Pocket", cf * CFrame.new(x, 3.2, -0.55), V(0.5, 0.45, 0.05), RGB(100, 76, 46), M.Leather, NOCOLLIDE)
+	end
+	Parts.box(m, "Belt", cf * CFrame.new(0, 2.1, 0), V(2.08, 0.3, 1.08), RGB(50, 34, 22), M.Leather, NOCOLLIDE)
+	Parts.box(m, "Buckle", cf * CFrame.new(0, 2.1, -0.56), V(0.4, 0.3, 0.06), RGB(230, 190, 70), M.Metal, NOCOLLIDE)
+	-- шляпа-сафари
+	Parts.box(m, "HatBrim", cf * CFrame.new(0, 5.15, 0) * CFrame.Angles(0, 0, math.pi / 2), V(0.15, 3, 3), RGB(214, 190, 130), M.Fabric, { Shape = Enum.PartType.Cylinder, CanCollide = false })
+	Parts.box(m, "HatTop", cf * CFrame.new(0, 5.55, 0), V(1.7, 0.9, 1.7), RGB(214, 190, 130), M.Fabric, { Shape = Enum.PartType.Ball, CanCollide = false })
+	Parts.box(m, "HatBand", cf * CFrame.new(0, 5.3, 0) * CFrame.Angles(0, 0, math.pi / 2), V(0.25, 1.75, 1.75), RGB(80, 56, 34), M.Fabric, { Shape = Enum.PartType.Cylinder, CanCollide = false })
+	-- рюкзак со скатанным спальником
+	Parts.box(m, "Backpack", cf * CFrame.new(0, 3.1, 0.85), V(1.6, 1.8, 0.7), RGB(70, 90, 60), M.Fabric, NOCOLLIDE)
+	Parts.box(m, "Bedroll", cf * CFrame.new(0, 4.1, 0.85) * CFrame.Angles(0, 0, math.pi / 2), V(0.6, 1.9, 0.6), RGB(160, 60, 50), M.Fabric, { Shape = Enum.PartType.Cylinder, CanCollide = false })
 	local hum = Instance.new("Humanoid")
 	hum.DisplayName = name
 	hum.Parent = m
@@ -252,24 +260,77 @@ function World.BuildLobby()
 	t.Text = "ПРАВИЛА ПОЛЯНЫ\n\n1. Днём врата открыты — исследуй лабиринт.\n2. На закате врата закрываются. Вернись!\n3. Ночью в лабиринте Скрежетники.\n4. Раненого друга подними бинтом.\n5. Найди Ключ в золотом сундуке и выход.\n6. Ctrl — пригнуться и пролезть в щель."
 	t.Parent = sg
 
-	-- торговец классами
-	local counter = Parts.span(m, "Counter", o, V(-58, 0, 2), V(-50, 3.5, 18), RGB(90, 64, 40), M.WoodPlanks)
-	Parts.span(m, "CounterTop", o, V(-58.3, 3.5, 1.7), V(-49.7, 3.9, 18.3), RGB(120, 90, 60), M.Wood)
-	local _, npcTorso = classicNPC(m, CFrame.lookAt(o + V(-59.5, 0, 10), o + V(-40, 0, 10)), "Торговец классами")
-	local mp = prompt(counter, "Классы", "Торговец", 0, 12)
-	local msign = Parts.span(m, "ShopSign", o, V(-61.4, 9, 2), V(-61.2, 13, 18), RGB(40, 24, 16), M.Wood)
-	local ms = Instance.new("SurfaceGui")
-	ms.Face = Enum.NormalId.Right
-	ms.PixelsPerStud = 25
-	ms.Parent = msign
-	local mt = Instance.new("TextLabel")
-	mt.Size = UDim2.fromScale(1, 1)
-	mt.BackgroundTransparency = 1
-	mt.Font = Enum.Font.GothamBlack
-	mt.TextScaled = true
-	mt.TextColor3 = RGB(255, 210, 90)
-	mt.Text = "КЛАССЫ · за монеты"
-	mt.Parent = ms
+	-- ларёк торговца классами: деревянный навес, гирлянда ламп, вывеска, клетка, ящики
+	local base = CFrame.lookAt(o + V(-52, 0, 4), o + V(0, 0, 4)) -- -Z смотрит в зал
+	local LOG, PLANK, TRIM = RGB(120, 78, 44), RGB(98, 62, 36), RGB(240, 200, 70)
+	local function bp(name, rel, size, color, mat, props)
+		return Parts.box(m, name, base * rel, size, color, mat, props)
+	end
+	bp("BoothFloor", CFrame.new(0, 0.2, 0), V(22, 0.4, 12), RGB(80, 60, 44), M.WoodPlanks)
+	bp("BoothGlow", CFrame.new(0, 0.05, -6.6), V(24, 0.1, 1.2), RGB(60, 255, 230), M.Neon, NOCOLLIDE)
+	for _, x in ipairs({ -10, -6, 6, 10 }) do
+		bp("BoothPost", CFrame.new(x, 7, -5), V(1.4, 14, 1.4), LOG, M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+		bp("BoothPost", CFrame.new(x, 7, 5), V(1.4, 14, 1.4), LOG, M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+	end
+	bp("BoothBack", CFrame.new(0, 7, 5.6), V(22, 14, 0.6), PLANK, M.WoodPlanks)
+	bp("BoothRoof", CFrame.new(0, 14.4, 0) * CFrame.Angles(math.rad(-8), 0, 0), V(25, 0.8, 14), RGB(110, 70, 40), M.WoodPlanks)
+	-- зубчатая жёлтая кромка крыши
+	for k = -6, 6 do
+		bp("RoofTrim", CFrame.new(k * 1.9, 13.5, -7.3) * CFrame.Angles(0, 0, math.rad(45)), V(1.3, 1.3, 0.3), TRIM, M.SmoothPlastic, NOCOLLIDE)
+	end
+	bp("RoofBeam", CFrame.new(0, 13.9, -7.1), V(25, 0.6, 0.6), TRIM, M.SmoothPlastic, NOCOLLIDE)
+	-- прилавок из бревна
+	local counter = bp("Counter", CFrame.new(0, 1.8, -3.8), V(18, 3.6, 2.2), PLANK, M.WoodPlanks)
+	bp("CounterLog", CFrame.new(0, 3.9, -3.8) * CFrame.Angles(0, math.pi / 2, 0), V(19, 1.6, 1.6), LOG, M.Wood, { Shape = Enum.PartType.Cylinder })
+	for _, x in ipairs({ -9.6, 9.6 }) do
+		bp("LogEnd", CFrame.new(x, 3.9, -3.8) * CFrame.Angles(0, math.pi / 2, 0), V(0.3, 1.7, 1.7), TRIM, M.Wood, { Shape = Enum.PartType.Cylinder, CanCollide = false })
+	end
+	-- лампы-шары под крышей
+	for _, x in ipairs({ -9, -5, 5, 9 }) do
+		local bulb = bp("BoothBulb", CFrame.new(x, 12.6, -5.6), V(1.8, 1.8, 1.8), RGB(255, 245, 220), M.Neon, { Shape = Enum.PartType.Ball, CanCollide = false })
+		Parts.light(bulb, 16, 1.2, RGB(255, 235, 200), false)
+	end
+	-- вывеска
+	local signBoard = bp("BoothSign", CFrame.new(0, 17.2, -6.2) * CFrame.Angles(math.rad(-6), 0, 0), V(18, 5, 0.6), RGB(90, 56, 32), M.WoodPlanks)
+	local ss = Instance.new("SurfaceGui")
+	ss.Face = Enum.NormalId.Front
+	ss.PixelsPerStud = 30
+	ss.Parent = signBoard
+	local st1 = Instance.new("TextLabel")
+	st1.Size = UDim2.fromScale(1, 0.62)
+	st1.BackgroundTransparency = 1
+	st1.Font = Enum.Font.FredokaOne
+	st1.TextScaled = true
+	st1.TextColor3 = RGB(255, 70, 120)
+	st1.TextStrokeTransparency = 0
+	st1.TextStrokeColor3 = RGB(60, 20, 20)
+	st1.Text = "КЛАССЫ"
+	st1.Parent = ss
+	local st2 = Instance.new("TextLabel")
+	st2.Position = UDim2.fromScale(0.05, 0.62)
+	st2.Size = UDim2.fromScale(0.9, 0.32)
+	st2.BackgroundTransparency = 1
+	st2.Font = Enum.Font.GothamBold
+	st2.TextScaled = true
+	st2.TextColor3 = RGB(255, 245, 225)
+	st2.Text = "Стань сильнее с новым классом"
+	st2.Parent = ss
+	-- декор: птичья клетка, ящики, бумаги, красный флаг
+	for k = 0, 7 do
+		local a = k / 8 * math.pi * 2
+		bp("CageBar", CFrame.new(5 + math.cos(a) * 1.5, 6.4, 2 + math.sin(a) * 1.5), V(0.15, 4.4, 0.15), RGB(150, 110, 60), M.Wood, NOCOLLIDE)
+	end
+	bp("CageTop", CFrame.new(5, 8.8, 2), V(3.4, 0.5, 3.4), RGB(150, 110, 60), M.Wood, { Shape = Enum.PartType.Ball, CanCollide = false })
+	bp("CageBase", CFrame.new(5, 4.2, 2), V(3.6, 0.3, 3.6), RGB(120, 84, 48), M.Wood)
+	bp("CageStand", CFrame.new(5, 2.1, 2), V(0.4, 4.2, 0.4), RGB(90, 60, 36), M.Wood)
+	bp("Crate", CFrame.new(-7, 1.2, 3), V(2.4, 2.4, 2.4), RGB(180, 150, 100), M.WoodPlanks)
+	bp("Crate", CFrame.new(-7.2, 3.3, 3.1) * CFrame.Angles(0, 0.4, 0), V(1.8, 1.8, 1.8), RGB(190, 160, 110), M.WoodPlanks)
+	bp("Paper", CFrame.new(-3, 4.75, -3.6) * CFrame.Angles(0, 0.3, 0), V(1.2, 0.05, 1.5), RGB(240, 230, 200), M.SmoothPlastic, NOCOLLIDE)
+	bp("Paper", CFrame.new(3.4, 4.75, -3.7) * CFrame.Angles(0, -0.5, 0), V(1.2, 0.05, 1.5), RGB(240, 230, 200), M.SmoothPlastic, NOCOLLIDE)
+	bp("BannerPole", CFrame.new(13.5, 8, -4), V(0.5, 16, 0.5), RGB(70, 50, 30), M.Wood)
+	bp("Banner", CFrame.new(13.5, 11, -2.2), V(0.2, 7, 3.4), RGB(200, 50, 45), M.Fabric, NOCOLLIDE)
+	local _, npcTorso = classicNPC(m, base * CFrame.new(0, 0.4, 1), "Торговец классами")
+	local mp = prompt(counter, "Классы", "Торговец", 0, 14)
 	local _ = npcTorso
 
 	-- декор: ящики, бочки, растения, скамейки
@@ -305,7 +366,7 @@ end
 ------------------------------------------------------------------
 -- Рельеф
 ------------------------------------------------------------------
-local RAD = MZ.Radius * C -- радиус круглого лабиринта в studs
+local RAD = MZ.OuterRadius * C -- радиус круглого лабиринта в studs
 World.RADIUS = RAD
 local LAKE_R, SAND_R = 62, 76
 
@@ -787,70 +848,232 @@ end
 ------------------------------------------------------------------
 -- Лабиринт
 ------------------------------------------------------------------
-local function generate(rng)
-	local openE, openS, visited = {}, {}, {}
-	for i = 0, N - 1 do
-		openE[i], openS[i], visited[i] = {}, {}, {}
-	end
-	local valid = inMaze
-	local function link(a, b, c, d)
-		if a == c then
-			openS[a][math.min(b, d)] = true
-		else
-			openE[math.min(a, c)][b] = true
-		end
-	end
-	local stack = { { MID, CLEAR_LO - 1 } }
-	visited[MID][CLEAR_LO - 1] = true
-	while #stack > 0 do
-		local cur = stack[#stack]
-		local i, j = cur[1], cur[2]
-		local nbrs = {}
-		for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-			local ni, nj = i + d[1], j + d[2]
-			if valid(ni, nj) and not visited[ni][nj] then
-				table.insert(nbrs, { ni, nj })
-			end
-		end
-		if #nbrs == 0 then
-			table.remove(stack)
-		else
-			local nb = nbrs[rng:NextInteger(1, #nbrs)]
-			link(i, j, nb[1], nb[2])
-			visited[nb[1]][nb[2]] = true
-			table.insert(stack, nb)
-		end
-	end
-	for i = 0, N - 2 do
-		for j = 0, N - 1 do
-			if valid(i, j) and valid(i + 1, j) and rng:NextNumber() < MZ.ExtraOpenings then
-				openE[i][j] = true
-			end
-		end
-	end
-	for i = 0, N - 1 do
-		for j = 0, N - 2 do
-			if valid(i, j) and valid(i, j + 1) and rng:NextNumber() < MZ.ExtraOpenings then
-				openS[i][j] = true
-			end
-		end
-	end
-	return openE, openS, valid
+------------------------------------------------------------------
+-- Геометрия лабиринта: внутренний круг (клетки 32) и внешнее кольцо
+-- (клетки 64 — «увеличенный» лабиринт: коридоры шире, стены выше).
+-- Внешние клетки — это блоки 2x2 мелких клеток, поэтому стены сходятся ровно.
+------------------------------------------------------------------
+local R1, R2 = MZ.Radius, MZ.OuterRadius
+local C2 = C * 2
+local NC = math.ceil(N / 2)
+local H1, H2 = MZ.WallHeight, MZ.OuterWallHeight
+
+local function blockDist(I, J)
+	local x, y = 2 * I + 0.5 - MID, 2 * J + 0.5 - MID
+	return math.sqrt(x * x + y * y)
 end
 
-local function neighbors(i, j, openE, openS, valid)
+-- "inner" / "outer" / "out" для большого блока
+local function regionC(I, J)
+	if I < 0 or J < 0 or I >= NC or J >= NC then
+		return "out"
+	end
+	local d = blockDist(I, J)
+	if d <= R1 then
+		return "inner"
+	elseif d <= R2 then
+		return "outer"
+	end
+	return "out"
+end
+
+-- "in" / "outer" / "clear" / "out" для мелкой клетки
+local function regionF(i, j)
+	if i < 0 or j < 0 or i >= N or j >= N then
+		return "out"
+	end
+	if inClearing(i, j) then
+		return "clear"
+	end
+	local r = regionC(i // 2, j // 2)
+	if r == "inner" then
+		return "in"
+	end
+	return r
+end
+
+local function fineKey(i, j)
+	return "f" .. i .. "," .. j
+end
+local function coarseKey(I, J)
+	return "c" .. I .. "," .. J
+end
+local function finePos(i, j)
+	return V((i - MID) * C, 0, (j - MID) * C)
+end
+local function coarsePos(I, J)
+	return V((2 * I + 0.5 - MID) * C, 0, (2 * J + 0.5 - MID) * C)
+end
+
+local DIRS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+
+-- лабиринт как граф: узлы — клетки обеих зон, рёбра — проходы
+local function generate(rng)
+	local open = {} -- ключ ребра -> true
+	local function ekey(a, b)
+		return a < b and (a .. "|" .. b) or (b .. "|" .. a)
+	end
+	local function dfs(cells, start, nbrs)
+		local visited = { [start] = true }
+		local stack = { start }
+		while #stack > 0 do
+			local cur = stack[#stack]
+			local cand = {}
+			for _, nb in ipairs(nbrs(cur)) do
+				if not visited[nb] then
+					table.insert(cand, nb)
+				end
+			end
+			if #cand == 0 then
+				table.remove(stack)
+			else
+				local nb = cand[rng:NextInteger(1, #cand)]
+				open[ekey(cur, nb)] = true
+				visited[nb] = true
+				table.insert(stack, nb)
+			end
+		end
+		-- немного лишних проходов, чтобы были петли
+		for _, c in ipairs(cells) do
+			for _, nb in ipairs(nbrs(c)) do
+				if rng:NextNumber() < MZ.ExtraOpenings * 0.5 then
+					open[ekey(c, nb)] = true
+				end
+			end
+		end
+	end
+	local nodes = {}
+	-- внутренняя зона
+	local fineCells, fineIJ = {}, {}
+	for i = 0, N - 1 do
+		for j = 0, N - 1 do
+			if regionF(i, j) == "in" then
+				local k = fineKey(i, j)
+				table.insert(fineCells, k)
+				fineIJ[k] = { i, j }
+				nodes[k] = { key = k, pos = finePos(i, j), size = C, zone = "in", i = i, j = j }
+			end
+		end
+	end
+	dfs(fineCells, fineKey(MID, CLEAR_LO - 1), function(k)
+		local ij = fineIJ[k]
+		local list = {}
+		for _, d in ipairs(DIRS) do
+			if regionF(ij[1] + d[1], ij[2] + d[2]) == "in" then
+				table.insert(list, fineKey(ij[1] + d[1], ij[2] + d[2]))
+			end
+		end
+		return list
+	end)
+	-- внешнее кольцо
+	local coarseCells, coarseIJ = {}, {}
+	for I = 0, NC - 1 do
+		for J = 0, NC - 1 do
+			if regionC(I, J) == "outer" then
+				local k = coarseKey(I, J)
+				table.insert(coarseCells, k)
+				coarseIJ[k] = { I, J }
+				nodes[k] = { key = k, pos = coarsePos(I, J), size = C2, zone = "outer", I = I, J = J }
+			end
+		end
+	end
+	dfs(coarseCells, coarseCells[1], function(k)
+		local ij = coarseIJ[k]
+		local list = {}
+		for _, d in ipairs(DIRS) do
+			if regionC(ij[1] + d[1], ij[2] + d[2]) == "outer" then
+				table.insert(list, coarseKey(ij[1] + d[1], ij[2] + d[2]))
+			end
+		end
+		return list
+	end)
+	-- проходы между кругом и кольцом: по одному в каждом из 10 секторов
+	local bins = {}
+	for _, k in ipairs(fineCells) do
+		local ij = fineIJ[k]
+		for _, d in ipairs(DIRS) do
+			local ni, nj = ij[1] + d[1], ij[2] + d[2]
+			if regionF(ni, nj) == "outer" then
+				local a = math.atan2(nj - MID, ni - MID)
+				local bin = math.floor((a + math.pi) / (math.pi * 2) * 10) % 10
+				bins[bin] = bins[bin] or {}
+				table.insert(bins[bin], { k, coarseKey(ni // 2, nj // 2), ni, nj, ij[1], ij[2] })
+			end
+		end
+	end
+	local gates = {}
+	for b = 0, 9 do
+		local list = bins[b]
+		if list and #list > 0 then
+			local g = list[rng:NextInteger(1, #list)]
+			open[ekey(g[1], g[2])] = true
+			gates[g[5] .. "," .. g[6] .. ">" .. g[3] .. "," .. g[4]] = true
+		end
+	end
+	-- соседи для поиска путей
+	local adj = {}
+	for k, n in pairs(nodes) do
+		adj[k] = {}
+		if n.zone == "in" then
+			for _, d in ipairs(DIRS) do
+				local ni, nj = n.i + d[1], n.j + d[2]
+				local r = regionF(ni, nj)
+				local nk = (r == "in" and fineKey(ni, nj)) or (r == "outer" and coarseKey(ni // 2, nj // 2)) or nil
+				if nk and open[ekey(k, nk)] and (r == "in" or gates[n.i .. "," .. n.j .. ">" .. ni .. "," .. nj]) then
+					table.insert(adj[k], nk)
+				end
+			end
+		end
+	end
+	for k, n in pairs(nodes) do
+		if n.zone == "outer" then
+			for _, d in ipairs(DIRS) do
+				local nk = coarseKey(n.I + d[1], n.J + d[2])
+				if regionC(n.I + d[1], n.J + d[2]) == "outer" and open[ekey(k, nk)] then
+					table.insert(adj[k], nk)
+				end
+			end
+		end
+	end
+	for k, list in pairs(adj) do
+		for _, nk in ipairs(list) do
+			if nodes[nk].zone ~= nodes[k].zone and not table.find(adj[nk], k) then
+				table.insert(adj[nk], k)
+			end
+		end
+	end
+	return {
+		nodes = nodes,
+		adj = adj,
+		open = open,
+		gates = gates,
+		ekey = ekey,
+	}
+end
+
+-- выход: большая клетка на краю кольца, наружу — свободное место
+local function exitCandidates()
 	local list = {}
-	if i < N - 1 and openE[i][j] and valid(i + 1, j) then
-		table.insert(list, { i + 1, j })
-	end
-	if i > 0 and openE[i - 1][j] and valid(i - 1, j) then
-		table.insert(list, { i - 1, j })
-	end
-	if j < N - 1 and openS[i][j] and valid(i, j + 1) then
-		table.insert(list, { i, j + 1 })
-	end
-	if j > 0 and openS[i][j - 1] and valid(i, j - 1) then
-		table.insert(list, { i, j - 1 })
+	for I = 0, NC - 1 do
+		for J = 0, NC - 1 do
+			if regionC(I, J) == "outer" then
+				for _, d in ipairs(DIRS) do
+					local clear = regionC(I + d[1], J + d[2]) == "out"
+					for k = 1, 6 do
+						for l = -2, 2 do
+							local ci = I + d[1] * k + (d[1] == 0 and l or 0)
+							local cj = J + d[2] * k + (d[2] == 0 and l or 0)
+							if regionC(ci, cj) ~= "out" then
+								clear = false
+							end
+						end
+					end
+					if clear then
+						table.insert(list, { I = I, J = J, di = d[1], dj = d[2] })
+					end
+				end
+			end
+		end
 	end
 	return list
 end
@@ -881,70 +1104,42 @@ local function chest(parent, pos, facing, golden)
 	return { model = m, lid = lid, prompt = p, base = b }
 end
 
--- выход: клетка на краю круга, от которой наружу прямой свободный «коридор»
-local function exitCandidates()
-	local list = {}
-	for i = 0, N - 1 do
-		for j = 0, N - 1 do
-			if inMaze(i, j) then
-				for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-					local clear = true
-					for k = 1, 12 do
-						for l = -3, 3 do
-							local ci = i + d[1] * k + (d[1] == 0 and l or 0)
-							local cj = j + d[2] * k + (d[2] == 0 and l or 0)
-							if inMaze(ci, cj) then
-								clear = false
-							end
-						end
-					end
-					if clear and not inMaze(i + d[1], j + d[2]) then
-						table.insert(list, { i = i, j = j, di = d[1], dj = d[2] })
-					end
-				end
-			end
-		end
-	end
-	return list
-end
-
--- Стены лабиринта и всё внутри. Каждую ночь строится заново (другие коридоры,
--- другие сундуки и шахты), но выход остаётся на месте.
--- fixed: { exit = {i,j,di,dj}, keyTaken, mapFound }
+-- Стены лабиринта и всё внутри. Каждую ночь строится заново, выход остаётся на месте.
+-- fixed: { exit = {I,J,di,dj}, keyTaken, mapFound }
 function World.BuildMazeLayout(parent, seed, O, fixed)
 	fixed = fixed or {}
 	local rng = Random.new(seed)
 	local m = Instance.new("Model")
 	m.Name = "Maze"
-	local openE, openS, valid = generate(rng)
+	local g = generate(rng)
+	local nodes, adj, open, gates, ekey = g.nodes, g.adj, g.open, g.gates, g.ekey
 	local refs = { model = m, nodes = {}, chests = {}, cells = {}, mapWalls = {} }
-	local H, T = MZ.WallHeight, MZ.WallThickness
+	local T = MZ.WallThickness
 
-	for i = 0, N - 1 do
-		for j = 0, N - 1 do
-			if valid(i, j) then
-				table.insert(refs.cells, cellPos(O, i, j))
-			end
-		end
+	local list = {}
+	for k, n in pairs(nodes) do
+		table.insert(list, k)
+		table.insert(refs.cells, O + n.pos)
 	end
+	table.sort(list)
 
 	-- расстояния от ворот поляны
 	local dist = {}
-	for i = 0, N - 1 do
-		dist[i] = {}
-	end
 	local queue = {}
 	for _, st in ipairs({ { MID, CLEAR_LO - 1 }, { MID, CLEAR_HI + 1 }, { CLEAR_LO - 1, MID }, { CLEAR_HI + 1, MID } }) do
-		dist[st[1]][st[2]] = 0
-		table.insert(queue, st)
+		local k = fineKey(st[1], st[2])
+		if nodes[k] then
+			dist[k] = 0
+			table.insert(queue, k)
+		end
 	end
 	local head = 1
 	while head <= #queue do
 		local cur = queue[head]
 		head += 1
-		for _, nb in ipairs(neighbors(cur[1], cur[2], openE, openS, valid)) do
-			if dist[nb[1]][nb[2]] == nil then
-				dist[nb[1]][nb[2]] = dist[cur[1]][cur[2]] + 1
+		for _, nb in ipairs(adj[cur]) do
+			if dist[nb] == nil then
+				dist[nb] = dist[cur] + 1
 				table.insert(queue, nb)
 			end
 		end
@@ -955,7 +1150,7 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 	if not ex then
 		local best = -1
 		for _, c in ipairs(exitCandidates()) do
-			local d = dist[c.i][c.j] or 0
+			local d = dist[coarseKey(c.I, c.J)] or 0
 			if d > best then
 				ex, best = c, d
 			end
@@ -963,71 +1158,101 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 	end
 	refs.exit = ex
 
-	-- щели
-	local crackS, crackE = {}, {}
-	for i = 0, N - 1 do
-		crackS[i], crackE[i] = {}, {}
+	-- все отрезки стен: потом соседние склеиваются в длинные
+	local segs = {}
+	local function addSeg(axis, fixedC, a, b, h, crack)
+		table.insert(segs, { axis = axis, fixed = fixedC, a = a, b = b, h = h, crack = crack })
 	end
-	local placed, tries = 0, 0
-	while placed < MZ.Cracks and tries < 3000 do
-		tries += 1
-		local i, j = rng:NextInteger(1, N - 3), rng:NextInteger(1, N - 3)
-		if rng:NextNumber() < 0.5 then
-			if valid(i, j) and valid(i, j + 1) and not openS[i][j] and not crackS[i][j] then
-				crackS[i][j] = true
-				placed += 1
+	-- мелкая сетка: стены внутреннего круга и граница с кольцом
+	for i = -1, N - 1 do
+		for j = -1, N - 1 do
+			for _, d in ipairs({ { 1, 0 }, { 0, 1 } }) do
+				local ai, aj, bi, bj = i, j, i + d[1], j + d[2]
+				local ra, rb = regionF(ai, aj), regionF(bi, bj)
+				local wall, h, crack = false, H1, false
+				if ra ~= "clear" and rb ~= "clear" then
+					if ra == "in" and rb == "in" then
+						wall = not open[ekey(fineKey(ai, aj), fineKey(bi, bj))]
+						crack = wall and rng:NextNumber() < 0.045
+					elseif (ra == "in" and rb == "outer") or (ra == "outer" and rb == "in") then
+						local fi, fj, oi, oj = ai, aj, bi, bj
+						if ra == "outer" then
+							fi, fj, oi, oj = bi, bj, ai, aj
+						end
+						wall = not gates[fi .. "," .. fj .. ">" .. oi .. "," .. oj]
+						h = H2
+					elseif (ra == "in" and rb == "out") or (ra == "out" and rb == "in") then
+						wall, h = true, H2
+					end
+				end
+				if wall then
+					if d[1] == 1 then -- стена между клетками по X: идёт вдоль Z
+						local x = (ai - MID) * C + C / 2
+						addSeg("Z", x, (aj - MID) * C - C / 2, (aj - MID) * C + C / 2, h, crack)
+					else
+						local z = (aj - MID) * C + C / 2
+						addSeg("X", z, (ai - MID) * C - C / 2, (ai - MID) * C + C / 2, h, crack)
+					end
+				end
 			end
-		elseif valid(i, j) and valid(i + 1, j) and not openE[i][j] and not crackE[i][j] then
-			crackE[i][j] = true
-			placed += 1
+		end
+	end
+	-- крупная сетка: стены внешнего кольца
+	local function isExit(I, J, di, dj)
+		return ex and ex.I == I and ex.J == J and ex.di == di and ex.dj == dj
+	end
+	for I = -1, NC - 1 do
+		for J = -1, NC - 1 do
+			for _, d in ipairs({ { 1, 0 }, { 0, 1 } }) do
+				local bI, bJ = I + d[1], J + d[2]
+				local ra, rb = regionC(I, J), regionC(bI, bJ)
+				local wall = false
+				if ra == "outer" and rb == "outer" then
+					wall = not open[ekey(coarseKey(I, J), coarseKey(bI, bJ))]
+				elseif ra == "outer" and rb == "out" then
+					wall = not isExit(I, J, d[1], d[2])
+				elseif ra == "out" and rb == "outer" then
+					wall = not isExit(bI, bJ, -d[1], -d[2])
+				end
+				if wall then
+					if d[1] == 1 then
+						local x = (2 * I + 1.5 - MID) * C
+						addSeg("Z", x, (2 * J - MID) * C - C / 2, (2 * J + 1 - MID) * C + C / 2, H2, false)
+					else
+						local z = (2 * J + 1.5 - MID) * C
+						addSeg("X", z, (2 * I - MID) * C - C / 2, (2 * I + 1 - MID) * C + C / 2, H2, false)
+					end
+				end
+			end
 		end
 	end
 
-	local function ivy(axis, fixedC, a, b)
+	local function ivy(axis, fixedC, a, b, h)
 		if rng:NextNumber() < 0.5 then
 			local len = math.min(b - a, rng:NextNumber(8, 22))
 			local cpos = rng:NextNumber(a + len / 2, b - len / 2)
-			local hgt = rng:NextNumber(12, 40)
+			local hgt = rng:NextNumber(12, h * 0.7)
 			local side = rng:NextNumber() < 0.5 and -1 or 1
 			if axis == "X" then
-				Parts.span(m, "Ivy", O, V(cpos - len / 2, H - hgt, fixedC + side * (T / 2) - 0.2), V(cpos + len / 2, H, fixedC + side * (T / 2) + 0.2), IVY, M.LeafyGrass, NOCOLLIDE)
+				Parts.span(m, "Ivy", O, V(cpos - len / 2, h - hgt, fixedC + side * (T / 2) - 0.2), V(cpos + len / 2, h, fixedC + side * (T / 2) + 0.2), IVY, M.LeafyGrass, NOCOLLIDE)
 			else
-				Parts.span(m, "Ivy", O, V(fixedC + side * (T / 2) - 0.2, H - hgt, cpos - len / 2), V(fixedC + side * (T / 2) + 0.2, H, cpos + len / 2), IVY, M.LeafyGrass, NOCOLLIDE)
+				Parts.span(m, "Ivy", O, V(fixedC + side * (T / 2) - 0.2, h - hgt, cpos - len / 2), V(fixedC + side * (T / 2) + 0.2, h, cpos + len / 2), IVY, M.LeafyGrass, NOCOLLIDE)
 			end
 		end
 	end
-
-	local function wallRun(axis, fixedC, from, to)
-		local a, b = from - T / 2, to + T / 2
+	local function wallPart(name, axis, fixedC, a, b, y0, y1, th)
 		if axis == "X" then
-			Parts.span(m, "MazeWall", O, V(a, 0, fixedC - T / 2), V(b, H, fixedC + T / 2), WALL, M.Slate)
-		else
-			Parts.span(m, "MazeWall", O, V(fixedC - T / 2, 0, a), V(fixedC + T / 2, H, b), WALL, M.Slate)
+			return Parts.span(m, name, O, V(a, y0, fixedC - th / 2), V(b, y1, fixedC + th / 2), WALL, M.Slate)
 		end
-		table.insert(refs.mapWalls, { axis, fixedC, a, b, 0 })
-		ivy(axis, fixedC, a, b)
+		return Parts.span(m, name, O, V(fixedC - th / 2, y0, a), V(fixedC + th / 2, y1, b), WALL, M.Slate)
 	end
-
 	-- стена со щелью (пролезть только пригнувшись)
-	local function crackWall(axis, fixedC, from, to)
+	local function crackWall(axis, fixedC, from, to, h)
 		local mid = (from + to) / 2
-		local function seg(a, b, y0, y1, name, group)
-			local p
-			if axis == "X" then
-				p = Parts.span(m, name, O, V(a, y0, fixedC - T / 2), V(b, y1, fixedC + T / 2), WALL, M.Slate)
-			else
-				p = Parts.span(m, name, O, V(fixedC - T / 2, y0, a), V(fixedC + T / 2, y1, b), WALL, M.Slate)
-			end
-			if group then
-				p.CollisionGroup = group
-			end
-			return p
-		end
-		seg(from - T / 2, mid - 3, 0, H, "MazeWall")
-		seg(mid + 3, to + T / 2, 0, H, "MazeWall")
-		seg(mid - 3, mid + 3, 9, H, "MazeWall")
-		seg(mid - 3, mid + 3, 4, 9, "CrawlCover", "CrawlCover")
-		table.insert(refs.mapWalls, { axis, fixedC, from - T / 2, to + T / 2, 1 })
+		wallPart("MazeWall", axis, fixedC, from - T / 2, mid - 3, 0, h, T)
+		wallPart("MazeWall", axis, fixedC, mid + 3, to + T / 2, 0, h, T)
+		wallPart("MazeWall", axis, fixedC, mid - 3, mid + 3, 9, h, T)
+		wallPart("CrawlCover", axis, fixedC, mid - 3, mid + 3, 4, 9, T).CollisionGroup = "CrawlCover"
 		for _, side in ipairs({ -1, 1 }) do
 			for k = 0, 6 do
 				local a = k / 6 * math.pi
@@ -1041,101 +1266,70 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 			Parts.box(m, "CrackMoss", CFrame.new(O + mp), axis == "X" and V(7, 0.2, 2.5) or V(2.5, 0.2, 7), IVY, M.LeafyGrass, NOCOLLIDE)
 		end
 	end
-
-	local function isExitWall(axis, line, k)
-		if not ex then
-			return false
+	-- склеиваем отрезки на одной линии одной высоты
+	table.sort(segs, function(p, q)
+		if p.axis ~= q.axis then
+			return p.axis < q.axis
+		elseif p.fixed ~= q.fixed then
+			return p.fixed < q.fixed
+		elseif p.h ~= q.h then
+			return p.h < q.h
 		end
-		if axis == "X" and ex.dj ~= 0 then
-			return k == ex.i and line == (ex.dj > 0 and ex.j or ex.j - 1)
-		elseif axis == "Z" and ex.di ~= 0 then
-			return k == ex.j and line == (ex.di > 0 and ex.i or ex.i - 1)
-		end
-		return false
-	end
-
-	-- стена между клетками A и B есть, если хотя бы одна из них в лабиринте
-	local function edge(aIn, bIn, aClr, bClr, open, exitWall)
-		if aClr or bClr or exitWall then
-			return false, false
-		end
-		if aIn and bIn then
-			return not open, false
-		end
-		return aIn or bIn, false
-	end
-
-	for line = -1, N - 1 do
-		local z = (line - MID) * C + C / 2
-		local runStart
-		for i = 0, N do
-			local present, crack = false, false
-			if i < N then
-				local aIn, bIn = valid(i, line), valid(i, line + 1)
-				present = edge(aIn, bIn, inClearing(i, line), inClearing(i, line + 1), openS[i] and openS[i][line], isExitWall("X", line, i))
-				crack = present and aIn and bIn and crackS[i] and crackS[i][line] == true
-				present = present and not crack
+		return p.a < q.a
+	end)
+	local run
+	local function flush()
+		if run then
+			local th = run.h > H1 and T * 2 or T
+			wallPart("MazeWall", run.axis, run.fixed, run.a - T / 2, run.b + T / 2, 0, run.h, th)
+			-- карниз сверху, тёмный цоколь со мхом снизу, у высоких стен — пояс посередине
+			local cap = wallPart("WallCap", run.axis, run.fixed, run.a - T / 2 - 0.6, run.b + T / 2 + 0.6, run.h - 0.2, run.h + 1.6, th + 1.2)
+			cap.Color, cap.Material = WALL_DARK, M.Slate
+			local foot = wallPart("WallFoot", run.axis, run.fixed, run.a - T / 2, run.b + T / 2, 0, 3.2, th + 0.8)
+			foot.Color, foot.Material = RGB(58, 66, 52), M.Slate
+			if run.h > H1 then
+				local band = wallPart("WallBand", run.axis, run.fixed, run.a - T / 2, run.b + T / 2, run.h * 0.55, run.h * 0.55 + 2, th + 0.6)
+				band.Color, band.Material = WALL_DARK, M.Slate
 			end
-			if present and not runStart then
-				runStart = i
-			elseif not present and runStart then
-				wallRun("X", z, (runStart - MID) * C - C / 2, (i - 1 - MID) * C + C / 2)
-				runStart = nil
-			end
-			if crack then
-				crackWall("X", z, (i - MID) * C - C / 2, (i - MID) * C + C / 2)
-			end
+			table.insert(refs.mapWalls, { run.axis, run.fixed, run.a - T / 2, run.b + T / 2, 0 })
+			ivy(run.axis, run.fixed, run.a, run.b, run.h)
+			run = nil
 		end
 	end
-	for line = -1, N - 1 do
-		local x = (line - MID) * C + C / 2
-		local runStart
-		for j = 0, N do
-			local present, crack = false, false
-			if j < N then
-				local aIn, bIn = valid(line, j), valid(line + 1, j)
-				present = edge(aIn, bIn, inClearing(line, j), inClearing(line + 1, j), openE[line] and openE[line][j], isExitWall("Z", line, j))
-				crack = present and aIn and bIn and crackE[line] and crackE[line][j] == true
-				present = present and not crack
-			end
-			if present and not runStart then
-				runStart = j
-			elseif not present and runStart then
-				wallRun("Z", x, (runStart - MID) * C - C / 2, (j - 1 - MID) * C + C / 2)
-				runStart = nil
-			end
-			if crack then
-				crackWall("Z", x, (j - MID) * C - C / 2, (j - MID) * C + C / 2)
-			end
+	for _, sg in ipairs(segs) do
+		if sg.crack then
+			flush()
+			crackWall(sg.axis, sg.fixed, sg.a, sg.b, sg.h)
+			table.insert(refs.mapWalls, { sg.axis, sg.fixed, sg.a - T / 2, sg.b + T / 2, 1 })
+		elseif run and run.axis == sg.axis and run.fixed == sg.fixed and run.h == sg.h and math.abs(run.b - sg.a) < 0.01 then
+			run.b = sg.b
+		else
+			flush()
+			run = { axis = sg.axis, fixed = sg.fixed, a = sg.a, b = sg.b, h = sg.h }
 		end
 	end
+	flush()
 
 	-- тупики
 	local deadEnds = {}
-	for i = 0, N - 1 do
-		for j = 0, N - 1 do
-			if valid(i, j) and dist[i][j] and dist[i][j] > 2 and not (ex and ex.i == i and ex.j == j) then
-				local nb = neighbors(i, j, openE, openS, valid)
-				if #nb == 1 then
-					table.insert(deadEnds, { i = i, j = j, d = dist[i][j], to = cellPos(O, nb[1][1], nb[1][2]) })
-				end
-			end
+	for _, k in ipairs(list) do
+		local n = nodes[k]
+		local isEx = ex and n.zone == "outer" and n.I == ex.I and n.J == ex.J
+		if dist[k] and dist[k] > 2 and #adj[k] == 1 and not isEx then
+			table.insert(deadEnds, { k = k, d = dist[k], pos = O + n.pos, to = O + nodes[adj[k][1]].pos })
 		end
 	end
 	table.sort(deadEnds, function(a, b)
 		return a.d > b.d
 	end)
-	-- золотой сундук с ключ-картой (пока ключ не найден)
 	if deadEnds[1] and not fixed.keyTaken then
 		local de = table.remove(deadEnds, 1)
-		local pos = cellPos(O, de.i, de.j)
-		table.insert(refs.chests, chest(m, pos, (de.to - pos).Unit, true))
+		table.insert(refs.chests, chest(m, de.pos, (de.to - de.pos).Unit, true))
 	end
 	-- карта лабиринта лежит на столе в тупике средней глубины
 	if not fixed.mapFound and #deadEnds > 4 then
 		local de = table.remove(deadEnds, math.floor(#deadEnds / 2))
-		local pos = cellPos(O, de.i, de.j)
-		local b = CFrame.lookAt(pos, pos + (de.to - pos).Unit)
+		local b = CFrame.lookAt(de.pos, de.pos + (de.to - de.pos).Unit)
 		Parts.box(m, "MapTable", b * CFrame.new(0, 1.6, 0), V(5, 0.4, 3), RGB(100, 72, 46), M.WoodPlanks)
 		for _, x in ipairs({ -2.1, 2.1 }) do
 			for _, z in ipairs({ -1.1, 1.1 }) do
@@ -1151,13 +1345,12 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 	for k, de in ipairs(deadEnds) do
 		table.insert(k <= #deadEnds / 2 and far or near, de)
 	end
-	local function takeMine(list, kinds)
-		if #list == 0 then
+	local function takeMine(lst, kinds)
+		if #lst == 0 then
 			return
 		end
-		local de = table.remove(list, rng:NextInteger(1, #list))
-		local pos = cellPos(O, de.i, de.j)
-		mine(m, pos, (de.to - pos).Unit, kinds, rng, refs.nodes)
+		local de = table.remove(lst, rng:NextInteger(1, #lst))
+		mine(m, de.pos, (de.to - de.pos).Unit, kinds, rng, refs.nodes)
 	end
 	for k = 1, MZ.Mines do
 		if k % 2 == 1 then
@@ -1175,50 +1368,50 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 	end
 	for _ = 1, math.min(MZ.Chests, #rest) do
 		local de = table.remove(rest, rng:NextInteger(1, #rest))
-		local pos = cellPos(O, de.i, de.j)
-		local c = chest(m, pos, (de.to - pos).Unit, false)
+		local c = chest(m, de.pos, (de.to - de.pos).Unit, false)
 		c.model:SetAttribute("Depth", de.d)
 		table.insert(refs.chests, c)
 	end
 
 	-- атмосфера: светящийся мох, кости, обломки, высокая трава
-	for _ = 1, 90 do
-		local p = refs.cells[rng:NextInteger(1, #refs.cells)]
+	local cells = refs.cells
+	for _ = 1, 110 do
+		local p = cells[rng:NextInteger(1, #cells)]
 		local glow = Parts.box(m, "GlowMoss", CFrame.new(p + V(rng:NextNumber(-12, 12), 0.2, rng:NextNumber(-12, 12))), V(rng:NextNumber(1, 3), 0.3, rng:NextNumber(1, 3)), RGB(90, 255, 170), M.Neon, NOCOLLIDE)
 		if rng:NextNumber() < 0.3 then
 			Parts.light(glow, 12, 0.5, RGB(90, 255, 170), false)
 		end
 	end
-	for _ = 1, 40 do
-		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-10, 10), 0, rng:NextNumber(-10, 10))
+	for _ = 1, 50 do
+		local p = cells[rng:NextInteger(1, #cells)] + V(rng:NextNumber(-10, 10), 0, rng:NextNumber(-10, 10))
 		if rng:NextNumber() < 0.5 then
 			Parts.box(m, "Bone", CFrame.new(p + V(0, 0.2, 0)) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), V(0.35, 0.35, 2.4), RGB(220, 215, 195), M.SmoothPlastic, NOCOLLIDE)
 		else
 			Parts.box(m, "Debris", CFrame.new(p + V(0, 0.8, 0)) * CFrame.Angles(rng:NextNumber(0, 3), rng:NextNumber(0, 3), 0), V(rng:NextNumber(1.5, 3), rng:NextNumber(1, 2), rng:NextNumber(1.5, 3)), WALL_DARK, M.Slate)
 		end
 	end
-	for _ = 1, 24 do
-		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-9, 9), 0, rng:NextNumber(-9, 9))
+	for _ = 1, 28 do
+		local p = cells[rng:NextInteger(1, #cells)] + V(rng:NextNumber(-9, 9), 0, rng:NextNumber(-9, 9))
 		local base = Parts.box(m, "TallGrass", CFrame.new(p + V(0, 1.4, 0)), V(2.6, 2.8, 2.6), RGB(100, 130, 65), M.Grass, NOCOLLIDE)
 		base.Transparency = 0.2
 		tag(prompt(base, "Сорвать траву", "Высокая трава", 0.4, 9), "FiberPrompt")
 	end
-	for k = 1, 9 do
-		local p = refs.cells[rng:NextInteger(1, #refs.cells)]
+	for k = 1, 10 do
+		local p = cells[rng:NextInteger(1, #cells)]
 		if (p - O).Magnitude > CLEAR_HALF + 60 then
 			camp(m, p, rng, k)
 		end
 	end
-	for _ = 1, 30 do
-		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-9, 9), 0, rng:NextNumber(-9, 9))
+	for _ = 1, 34 do
+		local p = cells[rng:NextInteger(1, #cells)] + V(rng:NextNumber(-9, 9), 0, rng:NextNumber(-9, 9))
 		lootCrate(m, p, rng)
 	end
 	for k = 10, 16 do
-		local p = refs.cells[rng:NextInteger(1, #refs.cells)] + V(rng:NextNumber(-8, 8), 0.1, rng:NextNumber(-8, 8))
+		local p = cells[rng:NextInteger(1, #cells)] + V(rng:NextNumber(-8, 8), 0.1, rng:NextNumber(-8, 8))
 		note(m, CFrame.new(p) * CFrame.Angles(0, rng:NextNumber(0, 6), 0), rng, k)
 	end
-	for _ = 1, 28 do
-		local c = refs.cells[rng:NextInteger(1, #refs.cells)]
+	for _ = 1, 30 do
+		local c = cells[rng:NextInteger(1, #cells)]
 		if (c - O).Magnitude > CLEAR_HALF + 40 then
 			local dir = ({ V(1, 0, 0), V(-1, 0, 0), V(0, 0, 1), V(0, 0, -1) })[rng:NextInteger(1, 4)]
 			vineHide(m, c + dir * 9.5, rng)
@@ -1230,79 +1423,81 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 end
 
 ------------------------------------------------------------------
--- Выход: туннель → пропасть с мостом → лаборатория → вертолётная площадка.
+-- Выход: широкий проём во всю клетку кольца → сразу пропасть с мостом →
+-- металлическая лаборатория → вертолётная площадка.
 -- Строится один раз за игру (лабиринт меняется, а выход — нет).
 ------------------------------------------------------------------
 function World.BuildExit(parent, O, ex)
 	local m = Instance.new("Model")
 	m.Name = "Exit"
-	local H, T = MZ.WallHeight, MZ.WallThickness
-	local inner = cellPos(O, ex.i, ex.j)
+	local T = MZ.WallThickness
+	local inner = O + coarsePos(ex.I, ex.J)
 	local out = V(ex.di, 0, ex.dj)
-	local mouth = inner + out * (C / 2)
+	local W = C2
+	local mouth = inner + out * (W / 2)
 	local b = CFrame.lookAt(mouth, mouth + out) -- -Z смотрит наружу
 	local refs = { model = m, exitOut = b }
-	local CONC = RGB(120, 120, 118)
-	local W = C / 2
+	local STEEL = RGB(96, 102, 110)
+	local STEEL_D = RGB(60, 64, 70)
 
-	-- 1. туннель: одинаковые стены слева и справа, арки, фонари
+	-- 1. короткий широкий проход: стены кольца продолжаются до самой пропасти
+	local pitStart, pitEnd = 10, 44
 	for _, sx in ipairs({ -1, 1 }) do
-		Parts.box(m, "TunnelWall", b * CFrame.new(sx * (W + T / 2), H / 2, -55), V(T, H, 110), WALL_DARK, M.Slate)
-		for d = 10, 100, 18 do
-			local lamp = Parts.box(m, "TunnelLamp", b * CFrame.new(sx * (W - 0.6), 12, -d), V(0.8, 1.6, 1.2), RGB(255, 200, 120), M.Neon)
-			Parts.light(lamp, 26, 1.2, RGB(255, 190, 120), d > 60)
-			Parts.box(m, "Ivy", b * CFrame.new(sx * (W - 0.3), H - 10, -d - 6), V(0.4, 20, 7), IVY, M.LeafyGrass, NOCOLLIDE)
+		Parts.box(m, "ExitWall", b * CFrame.new(sx * (W / 2 + T), H2 / 2, -(pitEnd + 4) / 2), V(T * 2, H2, pitEnd + 4), WALL_DARK, M.Slate)
+		for d = 6, pitEnd, 12 do
+			local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(sx * (W / 2 - 0.6), 14, -d), V(0.8, 1.8, 1.4), RGB(255, 200, 120), M.Neon)
+			Parts.light(lamp, 34, 1.3, RGB(255, 190, 120), d > 20)
+			Parts.box(m, "Ivy", b * CFrame.new(sx * (W / 2 - 0.3), H2 - 16, -d - 4), V(0.4, 32, 8), IVY, M.LeafyGrass, NOCOLLIDE)
 		end
 	end
-	for d = 6, 66, 12 do
-		Parts.box(m, "Arch", b * CFrame.new(0, H - 2, -d), V(C + T * 2, 4, 3), WALL_DARK, M.Slate)
-	end
-	Parts.box(m, "TunnelFloor", b * CFrame.new(0, 0.15, -35), V(C, 0.3, 70), RGB(70, 68, 64), M.Concrete)
-	local trigger = Parts.box(m, "ExitTrigger", b * CFrame.new(0, 6, -14), V(C, 12, 6), RGB(0, 0, 0), M.SmoothPlastic, { Transparency = 1, CanCollide = false, CanQuery = false })
-	refs.trigger = trigger
+	Parts.box(m, "ExitFloor", b * CFrame.new(0, 0.15, -pitStart / 2), V(W, 0.3, pitStart), RGB(70, 68, 64), M.Concrete)
+	refs.trigger = Parts.box(m, "ExitTrigger", b * CFrame.new(0, 6, -4), V(W, 12, 5), RGB(0, 0, 0), M.SmoothPlastic, { Transparency = 1, CanCollide = false, CanQuery = false })
 
-	-- 2. пропасть: дыра вниз во всю ширину туннеля, через неё узкий мост
-	refs.pit = { cf = b * CFrame.new(0, -10, -88), size = V(C + 8, 28, 36) }
+	-- 2. пропасть во всю ширину, вниз — темнота и красный отсвет; широкий мост
+	local plen = pitEnd - pitStart
+	local pmid = -(pitStart + pitEnd) / 2
+	refs.pit = { cf = b * CFrame.new(0, -10, pmid), size = V(W + 8, 28, plen + 2) }
 	safe(function()
 		workspace.Terrain:FillBlock(refs.pit.cf, refs.pit.size, M.Air)
 	end)
-	for _, d in ipairs({ -70, -106 }) do
-		Parts.box(m, "PitFace", b * CFrame.new(0, -45, d + (d == -70 and -0.5 or 0.5)), V(C + 8, 90, 1), RGB(40, 38, 36), M.Slate)
+	for _, d in ipairs({ -pitStart, -pitEnd }) do
+		Parts.box(m, "PitFace", b * CFrame.new(0, -45, d + (d == -pitStart and -0.5 or 0.5)), V(W + 8, 90, 1), RGB(40, 38, 36), M.Slate)
 	end
 	for _, sx in ipairs({ -1, 1 }) do
-		Parts.box(m, "PitSide", b * CFrame.new(sx * (W + 0.5), -45, -88), V(1, 90, 36), RGB(40, 38, 36), M.Slate)
+		Parts.box(m, "PitSide", b * CFrame.new(sx * (W / 2 + 0.5), -45, pmid), V(1, 90, plen), RGB(40, 38, 36), M.Slate)
 	end
-	Parts.box(m, "PitBottom", b * CFrame.new(0, -92, -88), V(C + 8, 2, 36), RGB(10, 8, 8), M.Slate)
-	for _, d in ipairs({ -80, -96 }) do
-		local glow = Parts.box(m, "PitGlow", b * CFrame.new(0, -88, d), V(2, 1, 2), RGB(120, 20, 20), M.Neon, NOCOLLIDE)
-		Parts.light(glow, 50, 2, RGB(255, 40, 30), true)
+	Parts.box(m, "PitBottom", b * CFrame.new(0, -92, pmid), V(W + 8, 2, plen), RGB(10, 8, 8), M.Slate)
+	for _, x in ipairs({ -18, 18 }) do
+		local glow = Parts.box(m, "PitGlow", b * CFrame.new(x, -88, pmid), V(2, 1, 2), RGB(120, 20, 20), M.Neon, NOCOLLIDE)
+		Parts.light(glow, 60, 2, RGB(255, 40, 30), true)
 	end
-	-- мост
-	Parts.box(m, "Bridge", b * CFrame.new(0, 0.3, -88), V(6, 0.6, 40), RGB(92, 66, 42), M.WoodPlanks)
+	Parts.box(m, "Bridge", b * CFrame.new(0, 0.3, pmid), V(10, 0.6, plen + 4), RGB(84, 88, 94), M.DiamondPlate)
 	for _, sx in ipairs({ -1, 1 }) do
-		Parts.box(m, "BridgeRope", b * CFrame.new(sx * 3, 3.2, -88), V(0.25, 0.25, 40), RGB(150, 120, 80), M.Fabric, NOCOLLIDE)
-		for d = 68, 108, 8 do
-			Parts.box(m, "BridgePost", b * CFrame.new(sx * 3, 1.7, -d), V(0.4, 3.4, 0.4), RGB(70, 50, 32), M.Wood)
+		Parts.box(m, "BridgeRail", b * CFrame.new(sx * 5, 3.4, pmid), V(0.3, 0.3, plen + 4), STEEL_D, M.Metal, NOCOLLIDE)
+		for d = pitStart, pitEnd, 6 do
+			Parts.box(m, "BridgePost", b * CFrame.new(sx * 5, 1.8, -d), V(0.4, 3.4, 0.4), STEEL_D, M.Metal)
 		end
 	end
-	Parts.box(m, "LandingFloor", b * CFrame.new(0, 0.15, -109), V(C, 0.3, 6), RGB(70, 68, 64), M.Concrete)
 
-	-- 3. фасад лаборатории с дверью и считывателем ключ-карты
-	local face = -112
-	local FW, FH = 80, 40
-	local doorW, doorH = 14, 16
-	Parts.box(m, "LabFacade", b * CFrame.new(-(doorW / 2 + (FW - doorW) / 4), FH / 2, face), V((FW - doorW) / 2, FH, 3), CONC, M.Concrete)
-	Parts.box(m, "LabFacade", b * CFrame.new(doorW / 2 + (FW - doorW) / 4, FH / 2, face), V((FW - doorW) / 2, FH, 3), CONC, M.Concrete)
-	Parts.box(m, "LabFacade", b * CFrame.new(0, doorH + (FH - doorH) / 2, face), V(doorW, FH - doorH, 3), CONC, M.Concrete)
-	local door = Parts.box(m, "ExitDoor", b * CFrame.new(0, doorH / 2, face + 0.3), V(doorW, doorH, 1.6), RGB(90, 95, 100), M.DiamondPlate)
-	for _, x in ipairs({ -doorW / 2 - 1, doorW / 2 + 1 }) do
-		Parts.box(m, "HazardStripe", b * CFrame.new(x, doorH / 2, face + 1.6), V(1.2, doorH, 0.2), RGB(230, 180, 40), M.SmoothPlastic, NOCOLLIDE)
+	-- 3. фасад лаборатории закрывает весь проход
+	local face = -(pitEnd + 2)
+	local FW, FH = W + 40, 60
+	local doorW, doorH = 20, 18
+	Parts.box(m, "LabFacade", b * CFrame.new(-(doorW / 2 + (FW - doorW) / 4), FH / 2, face), V((FW - doorW) / 2, FH, 4), STEEL, M.DiamondPlate)
+	Parts.box(m, "LabFacade", b * CFrame.new(doorW / 2 + (FW - doorW) / 4, FH / 2, face), V((FW - doorW) / 2, FH, 4), STEEL, M.DiamondPlate)
+	Parts.box(m, "LabFacade", b * CFrame.new(0, doorH + (FH - doorH) / 2, face), V(doorW, FH - doorH, 4), STEEL, M.DiamondPlate)
+	for y = 8, FH - 4, 10 do
+		Parts.box(m, "FacadeRib", b * CFrame.new(0, y, face + 2.2), V(FW, 0.8, 0.4), STEEL_D, M.Metal, NOCOLLIDE)
 	end
-	for _, x in ipairs({ -12, 12 }) do
-		local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(x, doorH + 3, face + 2), V(1.8, 1.8, 1.8), RGB(120, 255, 160), M.Neon)
+	local door = Parts.box(m, "ExitDoor", b * CFrame.new(0, doorH / 2, face + 0.6), V(doorW, doorH, 1.6), RGB(90, 95, 100), M.DiamondPlate)
+	for _, x in ipairs({ -doorW / 2 - 1, doorW / 2 + 1 }) do
+		Parts.box(m, "HazardStripe", b * CFrame.new(x, doorH / 2, face + 2.2), V(1.2, doorH, 0.2), RGB(230, 180, 40), M.SmoothPlastic, NOCOLLIDE)
+	end
+	for _, x in ipairs({ -14, 14 }) do
+		local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(x, doorH + 3, face + 2.6), V(1.8, 1.8, 1.8), RGB(120, 255, 160), M.Neon)
 		Parts.light(lamp, 40, 1.8, RGB(140, 255, 170), true)
 	end
-	local sign = Parts.box(m, "ExitSign", b * CFrame.new(0, doorH + 7, face + 1.7), V(24, 5, 0.3), RGB(20, 40, 25), M.SmoothPlastic)
+	local sign = Parts.box(m, "ExitSign", b * CFrame.new(0, doorH + 8, face + 2.3), V(30, 6, 0.3), RGB(20, 40, 25), M.SmoothPlastic)
 	local sg = Instance.new("SurfaceGui")
 	sg.Face = Enum.NormalId.Back
 	sg.PixelsPerStud = 25
@@ -1315,55 +1510,61 @@ function World.BuildExit(parent, O, ex)
 	tl.TextScaled = true
 	tl.TextColor3 = RGB(140, 255, 170)
 	tl.Parent = sg
-	local reader = Parts.box(m, "CardReader", b * CFrame.new(doorW / 2 + 3, 4.6, face + 1.8), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
+	local reader = Parts.box(m, "CardReader", b * CFrame.new(doorW / 2 + 3, 4.6, face + 2.4), V(1.6, 2.4, 0.5), RGB(30, 32, 36), M.Metal)
 	refs.readerLight = Parts.box(m, "ReaderLight", reader.CFrame * CFrame.new(0, 0.8, 0.3), V(0.5, 0.3, 0.1), RGB(255, 40, 40), M.Neon, NOCOLLIDE)
 	Parts.box(m, "ReaderSlot", reader.CFrame * CFrame.new(0, -0.2, 0.3), V(1, 0.12, 0.1), RGB(10, 10, 10), M.SmoothPlastic, NOCOLLIDE)
 	refs.reader = reader
 	refs.exitDoor = door
 	refs.exitPrompt = prompt(reader, "Приложить ключ-карту", "Считыватель", 0.3, 9)
 	refs.doorFront = b * CFrame.new(doorW / 2 - 1, 3, face + 7)
+	refs.introPts = { (b * CFrame.new(0, 5, 2)).Position, (b * CFrame.new(0, 5, -pitStart + 1)).Position, (b * CFrame.new(0, 5.3, face + 6)).Position }
+	refs.doorEye = (b * CFrame.new(0, 5.3, face + 6)).Position
 
-	-- 4. лаборатория внутри: пусто, мигает свет, брошенные столы и мониторы
-	local L0, L1 = face - 1.5, face - 61.5
-	local LW, LH = 40, 14
+	-- 4. лаборатория: металлический пол, стены из панелей, мигающий свет
+	local L0, L1 = face - 2, face - 64
+	local LW, LH = 48, 16
 	local len = L0 - L1
 	local mid = (L0 + L1) / 2
-	Parts.box(m, "LabFloor", b * CFrame.new(0, 0.2, mid), V(LW, 0.4, len), RGB(200, 202, 205), M.Concrete)
-	Parts.box(m, "LabCeiling", b * CFrame.new(0, LH, mid), V(LW, 0.6, len), RGB(160, 162, 165), M.Concrete)
+	Parts.box(m, "LabFloor", b * CFrame.new(0, 0.3, mid), V(LW, 0.6, len), RGB(110, 114, 120), M.DiamondPlate)
+	for x = -LW / 2 + 6, LW / 2 - 6, 12 do
+		Parts.box(m, "FloorGrate", b * CFrame.new(x, 0.62, mid), V(3, 0.05, len - 4), RGB(50, 54, 60), M.Metal, NOCOLLIDE)
+	end
+	Parts.box(m, "LabCeiling", b * CFrame.new(0, LH, mid), V(LW, 0.8, len), STEEL_D, M.Metal)
 	for _, sx in ipairs({ -1, 1 }) do
-		Parts.box(m, "LabWall", b * CFrame.new(sx * (LW / 2 + 0.5), LH / 2, mid), V(1, LH, len), RGB(215, 218, 220), M.SmoothPlastic)
+		Parts.box(m, "LabWall", b * CFrame.new(sx * (LW / 2 + 0.5), LH / 2, mid), V(1, LH, len), RGB(150, 156, 164), M.Metal)
+		for d = L0 - 4, L1 + 4, -8 do
+			Parts.box(m, "WallPanel", b * CFrame.new(sx * (LW / 2 - 0.1), LH / 2, d), V(0.3, LH - 2, 0.5), STEEL_D, M.Metal, NOCOLLIDE)
+		end
+		Parts.box(m, "Pipe", b * CFrame.new(sx * (LW / 2 - 0.8), LH - 2, mid) * CFrame.Angles(0, math.pi / 2, 0), V(len, 1, 1), RGB(120, 90, 60), M.Metal, { Shape = Enum.PartType.Cylinder, CanCollide = false })
 	end
-	-- задняя стена с дверью наружу
-	local backW = 12
-	Parts.box(m, "LabWall", b * CFrame.new(-(backW / 2 + (LW - backW) / 4), LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(215, 218, 220), M.SmoothPlastic)
-	Parts.box(m, "LabWall", b * CFrame.new(backW / 2 + (LW - backW) / 4, LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(215, 218, 220), M.SmoothPlastic)
-	Parts.box(m, "LabWall", b * CFrame.new(0, 11 + (LH - 11) / 2, L1), V(backW, LH - 11, 1), RGB(215, 218, 220), M.SmoothPlastic)
-	refs.labBackDoor = Parts.box(m, "LabBackDoor", b * CFrame.new(0, 5.5, L1), V(backW, 11, 0.8), RGB(90, 95, 100), M.DiamondPlate)
+	local backW = 14
+	Parts.box(m, "LabWall", b * CFrame.new(-(backW / 2 + (LW - backW) / 4), LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(150, 156, 164), M.Metal)
+	Parts.box(m, "LabWall", b * CFrame.new(backW / 2 + (LW - backW) / 4, LH / 2, L1), V((LW - backW) / 2, LH, 1), RGB(150, 156, 164), M.Metal)
+	Parts.box(m, "LabWall", b * CFrame.new(0, 12 + (LH - 12) / 2, L1), V(backW, LH - 12, 1), RGB(150, 156, 164), M.Metal)
+	refs.labBackDoor = Parts.box(m, "LabBackDoor", b * CFrame.new(0, 6, L1), V(backW, 12, 0.8), RGB(90, 95, 100), M.DiamondPlate)
 	for d = L0 - 6, L1 + 6, -10 do
-		local lamp = Parts.box(m, "LabLamp", b * CFrame.new(0, LH - 0.5, d), V(8, 0.3, 1.2), RGB(230, 245, 255), M.Neon)
-		Parts.light(lamp, 24, 1, RGB(220, 235, 255), (d // 10) % 2 == 0)
+		local lamp = Parts.box(m, "LabLamp", b * CFrame.new(0, LH - 0.6, d), V(10, 0.3, 1.2), RGB(230, 245, 255), M.Neon)
+		Parts.light(lamp, 26, 1, RGB(220, 235, 255), (d // 10) % 2 == 0)
 	end
-	local rng = Random.new(ex.i * 31 + ex.j)
+	local rng = Random.new(ex.I * 31 + ex.J)
 	for k = 0, 4 do
 		for _, sx in ipairs({ -1, 1 }) do
 			local d = L0 - 8 - k * 11
-			local dcf = b * CFrame.new(sx * 14, 0, d) * CFrame.Angles(0, sx * math.pi / 2, 0)
+			local dcf = b * CFrame.new(sx * 17, 0.6, d) * CFrame.Angles(0, sx * math.pi / 2, 0)
 			Parts.box(m, "Desk", dcf * CFrame.new(0, 2.6, 0), V(8, 0.3, 3.4), RGB(70, 72, 78), M.Metal)
 			Parts.box(m, "DeskLeg", dcf * CFrame.new(0, 1.25, 0), V(7.6, 2.5, 0.3), RGB(60, 62, 66), M.Metal)
-			local screen = Parts.box(m, "Monitor", dcf * CFrame.new(-1.5, 4, 1), V(2.6, 1.7, 0.2), rng:NextNumber() < 0.5 and RGB(60, 200, 120) or RGB(70, 140, 230), M.Neon, NOCOLLIDE)
-			screen.CFrame = screen.CFrame * CFrame.Angles(0, math.pi, 0)
+			Parts.box(m, "Monitor", dcf * CFrame.new(-1.5, 4, 1) * CFrame.Angles(0, math.pi, 0), V(2.6, 1.7, 0.2), rng:NextNumber() < 0.5 and RGB(60, 200, 120) or RGB(70, 140, 230), M.Neon, NOCOLLIDE)
 			Parts.box(m, "Paper", dcf * CFrame.new(rng:NextNumber(-2, 2), 2.8, rng:NextNumber(-1, 1)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(1, 0.05, 1.3), RGB(240, 240, 235), M.SmoothPlastic, NOCOLLIDE)
 			Parts.box(m, "Chair", dcf * CFrame.new(0, 1.2, -2.6) * CFrame.Angles(0, rng:NextNumber(-0.6, 0.6), rng:NextNumber() < 0.2 and 1.4 or 0), V(1.8, 2.4, 1.8), RGB(40, 40, 46), M.Fabric)
 		end
 	end
-	-- разбитая колба в центре
-	Parts.box(m, "TankBase", b * CFrame.new(0, 0.8, mid), V(7, 1.2, 7), RGB(60, 62, 66), M.Metal, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
-	Parts.box(m, "TankGlass", b * CFrame.new(0, 5, mid), V(7, 6, 6), RGB(150, 220, 200), M.Glass, { Transparency = 0.6, CanCollide = false })
+	Parts.box(m, "TankBase", b * CFrame.new(0, 1.2, mid), V(7, 1.2, 7), RGB(60, 62, 66), M.Metal, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+	Parts.box(m, "TankGlass", b * CFrame.new(0, 5.4, mid), V(7, 6, 6), RGB(150, 220, 200), M.Glass, { Transparency = 0.6, CanCollide = false })
 	for _ = 1, 10 do
-		Parts.box(m, "Shard", b * CFrame.new(rng:NextNumber(-8, 8), 0.45, mid + rng:NextNumber(-8, 8)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(0.8, 0.05, 0.5), RGB(170, 230, 210), M.Glass, NOCOLLIDE)
+		Parts.box(m, "Shard", b * CFrame.new(rng:NextNumber(-8, 8), 0.65, mid + rng:NextNumber(-8, 8)) * CFrame.Angles(0, rng:NextNumber(0, 3), 0), V(0.8, 0.05, 0.5), RGB(170, 230, 210), M.Glass, NOCOLLIDE)
 	end
-	refs.labStart = b * CFrame.new(0, 5, face - 3)
-	refs.labEnd = b * CFrame.new(0, 5, L1 + 4)
+	refs.labStart = b * CFrame.new(0, 5.3, face - 4)
+	refs.labEnd = b * CFrame.new(0, 5.3, L1 + 4)
 
 	-- 5. снаружи: вертолётная площадка в лесу
 	local pad = b * CFrame.new(0, 0, L1 - 70)
@@ -1374,7 +1575,7 @@ function World.BuildExit(parent, O, ex)
 	Parts.box(m, "Path", b * CFrame.new(0, 0.1, L1 - 35), V(8, 0.2, 70), RGB(120, 100, 70), M.Ground, NOCOLLIDE)
 	refs.helipad = pad
 	-- зона выхода: здесь нет Скрежетников, и лес не растёт
-	refs.zone = { cf = b * CFrame.new(0, 0, -150), size = V(100, 300, 320) }
+	refs.zone = { cf = b * CFrame.new(0, 0, (L1 - 100) / 2), size = V(W + 50, 300, -(L1 - 100) + 10) }
 	m.Parent = parent
 	return refs
 end
