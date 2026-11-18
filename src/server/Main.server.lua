@@ -2412,7 +2412,9 @@ R.Admin.OnServerEvent:Connect(function(p, code)
 		return
 	end
 	local lvl = ADMIN_CODES[clean]
-	if lvl and lvl > (p:GetAttribute("Admin") or 0) then
+	-- админка только у владельца игры (и в Studio при тесте), даже если код узнают другие
+	local isOwner = p.UserId == game.CreatorId or RunService:IsStudio()
+	if lvl and isOwner and lvl > (p:GetAttribute("Admin") or 0) then
 		p:SetAttribute("Admin", lvl)
 	end
 end)
