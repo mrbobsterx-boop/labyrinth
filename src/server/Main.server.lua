@@ -659,13 +659,7 @@ local function down(p)
 			notify(other, p.DisplayName .. " ранен! Подойди и подними его бинтом (зажми E).")
 		end
 	end
-	local token = st.downedAt
-	task.delay(Config.DownedTime, function()
-		if st.downed and st.downedAt == token and st.session == s then
-			notify(p, "Тебя не успели поднять... Ты в лобби.")
-			returnToLobby(p)
-		end
-	end)
+	-- таймера нет: ждём, пока друг поднимет; если ранены все — все в лобби
 	checkAllDowned(s)
 end
 
@@ -2411,7 +2405,13 @@ R.Admin.OnServerEvent:Connect(function(p, code)
 	if n > 10 or typeof(code) ~= "string" then
 		return
 	end
-	local lvl = ADMIN_CODES[code:gsub("%s", "")]
+	local clean = code:gsub("%s", "")
+	-- код 444: свой «фонарик» — можно включать полный свет (L)
+	if clean == "444" then
+		p:SetAttribute("Light", true)
+		return
+	end
+	local lvl = ADMIN_CODES[clean]
 	if lvl and lvl > (p:GetAttribute("Admin") or 0) then
 		p:SetAttribute("Admin", lvl)
 	end
@@ -2741,6 +2741,33 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 			place(target, mh.CFrame * CFrame.new(0, 0, -6), false)
 			notify(target, "Админ телепортировал тебя к себе")
 		end
+	elseif action == "give" and typeof(value) == "table" and typeof(value.uid) == "number" and typeof(value.item) == "string" then
+		-- выдать игроку предмет или ресурс
+		local target = Players:GetPlayerByUserId(value.uid)
+		local tst = target and state[target]
+		if not tst then
+			return
+		end
+		local id = value.item
+		if Items.Tools[id] and Items.Tools[id].Kind ~= "held" and Items.Tools[id].Kind ~= "fists" then
+			if not table.find(tst.tools, id) then
+				table.insert(tst.tools, id)
+				target:SetAttribute("Tools", HttpService:JSONEncode(tst.tools))
+			end
+			notify(target, "Админ выдал тебе: " .. Items.toolName(id))
+		elseif Items.Resources[id] then
+			addRes(target, id, id == "key" and 1 or 10)
+			notify(target, "Админ выдал тебе: " .. Items.Resources[id].Name .. (id == "key" and "" or " ×10"))
+		elseif id:sub(1, 6) == "armor:" then
+			local tier = tonumber(id:sub(7))
+			if tier and Items.Armor[tier] then
+				tst.armor = nil
+				giveArmor(target, tier)
+			end
+		else
+			return
+		end
+		notify(p, "Выдано игроку " .. target.DisplayName)
 	elseif action == "kick" and typeof(value) == "number" then
 		-- выгнать с сервера (зайти снова можно)
 		local target = Players:GetPlayerByUserId(value)
