@@ -1293,8 +1293,25 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 		return p.a < q.a
 	end)
 	local run
+	-- факелы на стенах лабиринта, чтобы в коридорах было светлее
+	local torchN = 0
+	local function wallTorch(axis, fixedC, a, b, th)
+		if torchN >= 140 or b - a < 20 or rng:NextNumber() > 0.35 then
+			return
+		end
+		torchN += 1
+		local along = (a + b) / 2
+		local side = rng:NextNumber() < 0.5 and -1 or 1
+		local off = th / 2 + 0.6
+		local p = axis == "X" and V(along, 11, fixedC + side * off) or V(fixedC + side * off, 11, along)
+		local holder = Parts.box(m, "TorchHolder", CFrame.new(O + p - V(0, 1, 0)), V(0.6, 1.6, 0.6), RGB(50, 44, 40), M.Metal, NOCOLLIDE)
+		local flame = Parts.box(m, "WallTorch", CFrame.new(O + p + V(0, 0.4, 0)), V(0.8, 1, 0.8), RGB(255, 160, 70), M.Neon, NOCOLLIDE)
+		Parts.light(flame, 34, 1.4, RGB(255, 175, 100), true)
+		local _ = holder
+	end
 	local function flush()
 		if run then
+			wallTorch(run.axis, run.fixed, run.a, run.b, run.h > H1 and T * 2 or T)
 			local th = run.h > H1 and T * 2 or T
 			wallPart("MazeWall", run.axis, run.fixed, run.a - T / 2, run.b + T / 2, 0, run.h, th)
 			-- карниз сверху, тёмный цоколь со мхом снизу, у высоких стен — пояс посередине
@@ -1456,9 +1473,11 @@ function World.BuildExit(parent, O, ex)
 	local STEEL_D = RGB(60, 64, 70)
 
 	-- 1. короткий широкий проход: стены кольца продолжаются до самой пропасти
-	local pitStart, pitEnd = 10, 44
+	-- пропасть короче, перед дверью — широкая площадка, чтобы не упасть
+	local pitStart, pitEnd = 10, 34
+	local face = -(pitEnd + 14)
 	for _, sx in ipairs({ -1, 1 }) do
-		Parts.box(m, "ExitWall", b * CFrame.new(sx * (W / 2 + T), H2 / 2, -(pitEnd + 4) / 2), V(T * 2, H2, pitEnd + 4), WALL_DARK, M.Slate)
+		Parts.box(m, "ExitWall", b * CFrame.new(sx * (W / 2 + T), H2 / 2, face / 2), V(T * 2, H2, -face), WALL_DARK, M.Slate)
 		for d = 6, pitEnd, 12 do
 			local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(sx * (W / 2 - 0.6), 14, -d), V(0.8, 1.8, 1.4), RGB(255, 200, 120), M.Neon)
 			Parts.light(lamp, 34, 1.3, RGB(255, 190, 120), d > 20)
@@ -1495,7 +1514,11 @@ function World.BuildExit(parent, O, ex)
 	end
 
 	-- 3. фасад лаборатории закрывает весь проход
-	local face = -(pitEnd + 2)
+	-- площадка перед дверью (со считывателем), на всю ширину прохода
+	Parts.box(m, "Landing", b * CFrame.new(0, 0.15, (face - pitEnd) / 2), V(W, 0.3, -face - pitEnd), RGB(78, 76, 72), M.Concrete)
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "LandingRail", b * CFrame.new(sx * (5.5 + (W / 2 - 6) / 2), 1.8, -pitEnd - 0.3), V(W / 2 - 6, 3.4, 0.4), RGB(60, 64, 70), M.Metal)
+	end
 	local FW, FH = W + 40, 60
 	local doorW, doorH = 20, 18
 	Parts.box(m, "LabFacade", b * CFrame.new(-(doorW / 2 + (FW - doorW) / 4), FH / 2, face), V((FW - doorW) / 2, FH, 4), STEEL, M.DiamondPlate)

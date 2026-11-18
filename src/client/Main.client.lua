@@ -212,7 +212,7 @@ local function refreshRes()
 	resPanel.Visible = #resPanel:GetChildren() > 2
 end
 
-local hotbar = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(0, 0, 0, 64), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1 }, gui)
+local hotbar = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(0, 0, 0, 76), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1 }, gui)
 make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, hotbar)
 local tools = {}
 local equipped = nil
@@ -246,6 +246,38 @@ local function hotbarList()
 	return list
 end
 
+-- маленькая 3D-картинка предмета (топор, факел, верстак...) для ячейки
+local ItemModels = require(Shared:WaitForChild("ItemModels"))
+local DeployModels = require(Shared:WaitForChild("Deployables"))
+local function itemIcon(id, parent)
+	local vp = make("ViewportFrame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.fromOffset(46, 46), BackgroundTransparency = 1, Ambient = RGB(200, 200, 200), LightColor = RGB(255, 255, 255), LightDirection = Vector3.new(-1, -1, -1) }, parent)
+	local def = Items.Tools[id]
+	local ok, model = pcall(function()
+		if def and def.Kind == "deploy" then
+			return DeployModels.build(def.Deploy, CFrame.new())
+		end
+		return ItemModels.build(id)
+	end)
+	if not ok or not model then
+		return vp
+	end
+	if not def or def.Kind == "fists" then
+		model:Destroy()
+		make("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 28, Text = "✊", TextColor3 = RGB(255, 255, 255) }, vp)
+		return vp
+	end
+	model.Parent = vp
+	local cf, size = model:GetBoundingBox()
+	local cam = Instance.new("Camera")
+	cam.FieldOfView = 40
+	local dist = math.max(size.X, size.Y, size.Z) * 1.6 + 0.5
+	-- предмет повёрнут наискосок, чтобы было понятно, что это
+	cam.CFrame = CFrame.lookAt(cf.Position + Vector3.new(dist * 0.55, dist * 0.35, dist * 0.75), cf.Position)
+	cam.Parent = vp
+	vp.CurrentCamera = cam
+	return vp
+end
+
 local function refreshHotbar()
 	for _, c in ipairs(hotbar:GetChildren()) do
 		if c:IsA("TextButton") then
@@ -254,17 +286,21 @@ local function refreshHotbar()
 	end
 	for i, id in ipairs(hotbarList()) do
 		local b = make("TextButton", {
-			Size = UDim2.new(0, 96, 0, 64),
+			Size = UDim2.new(0, 96, 0, 76),
 			BackgroundColor3 = id == equipped and RGB(70, 90, 50) or RGB(18, 20, 18),
 			BackgroundTransparency = 0.25,
 			Font = UI_FONT,
-			TextSize = 12,
+			TextSize = 11,
 			TextWrapped = true,
+			TextYAlignment = Enum.TextYAlignment.Bottom,
 			TextColor3 = RGB(235, 230, 215),
-			Text = i .. "\n" .. Items.toolName(id),
+			Text = Items.toolName(id),
 			LayoutOrder = i,
 		}, hotbar)
 		corner(b, 8)
+		make("UIPadding", { PaddingBottom = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3) }, b)
+		itemIcon(id, b)
+		make("TextLabel", { Position = UDim2.fromOffset(2, 0), Size = UDim2.fromOffset(16, 16), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 13, TextColor3 = RGB(255, 230, 150), Text = tostring(i) }, b)
 		if id == equipped then
 			make("UIStroke", { Color = RGB(200, 230, 140), Thickness = 2 }, b)
 		end
@@ -1407,12 +1443,13 @@ local function applyLighting(phase, a)
 		return x:Lerp(y, night)
 	end
 	Lighting.ClockTime = clock
-	Lighting.Brightness = 4 - night * 2.6
-	Lighting.ExposureCompensation = 0.35 - night * 0.1
-	Lighting.Ambient = mix(RGB(120, 115, 105), RGB(48, 52, 72))
-	Lighting.OutdoorAmbient = mix(RGB(185, 180, 170), RGB(70, 80, 110))
+	-- светлее: даже ночью всё хорошо видно (лунный свет)
+	Lighting.Brightness = 4.5 - night * 2.2
+	Lighting.ExposureCompensation = 0.6 - night * 0.05
+	Lighting.Ambient = mix(RGB(150, 145, 135), RGB(95, 102, 130))
+	Lighting.OutdoorAmbient = mix(RGB(200, 196, 186), RGB(120, 130, 165))
 	if atmo then
-		atmo.Density = 0.25 + night * 0.12
+		atmo.Density = 0.22 + night * 0.08
 		atmo.Haze = 1.2 + night * 1.2
 		atmo.Color = mix(RGB(200, 190, 170), RGB(60, 70, 100))
 		atmo.Decay = mix(RGB(110, 100, 90), RGB(20, 22, 40))

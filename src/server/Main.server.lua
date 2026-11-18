@@ -418,6 +418,7 @@ end)
 -- Ранение и подъём
 ------------------------------------------------------------------
 local respawnAtClearing
+local returnToLobby
 
 -- тряпичная кукла: суставы становятся шарнирами, тело падает и болтается
 local function setRagdoll(char, on)
@@ -583,10 +584,16 @@ local function checkAllDowned(s)
 			return
 		end
 	end
-	notifySession(s, "Все ранены... Вы очнулись у лифта на поляне.")
-	for _, p in ipairs(s.players) do
-		respawnAtClearing(p)
-	end
+	-- поднять некому — все возвращаются в лобби
+	notifySession(s, "Все ранены, и помочь некому... Вы возвращаетесь в лобби.")
+	local list = table.clone(s.players)
+	task.delay(3, function()
+		for _, p in ipairs(list) do
+			if state[p] and state[p].session == s then
+				returnToLobby(p)
+			end
+		end
+	end)
 end
 
 local function down(p)
@@ -655,8 +662,8 @@ local function down(p)
 	local token = st.downedAt
 	task.delay(Config.DownedTime, function()
 		if st.downed and st.downedAt == token and st.session == s then
-			notify(p, "Ты очнулся у лифта на поляне.")
-			respawnAtClearing(p)
+			notify(p, "Тебя не успели поднять... Ты в лобби.")
+			returnToLobby(p)
 		end
 	end)
 	checkAllDowned(s)
@@ -1489,6 +1496,63 @@ local function leaveSession(p)
 	end
 end
 
+-- вернуть игрока в лобби (умер, и поднять некому)
+function returnToLobby(p)
+	local st = state[p]
+	if not st then
+		return
+	end
+	if st.revivePrompt then
+		st.revivePrompt:Destroy()
+		st.revivePrompt = nil
+	end
+	if st.dragPrompt then
+		st.dragPrompt:Destroy()
+		st.dragPrompt = nil
+	end
+	if st.draggedBy then
+		stopDrag(st.draggedBy)
+	end
+	stopDrag(p)
+	st.downed = false
+	st.hidden, st.sleeping = nil, nil
+	leaveSession(p)
+	p:SetAttribute("Downed", false)
+	p:SetAttribute("Hidden", false)
+	p:SetAttribute("Sleeping", false)
+	p:SetAttribute("InMatch", false)
+	freshInventory(p)
+	p:LoadCharacter()
+end
+
+-- упал в пропасть или в пустоту — возвращаем обратно
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		for _, p in ipairs(Players:GetPlayers()) do
+			local st = state[p]
+			local hrp = hrpOf(p)
+			if st and hrp and not p:GetAttribute("Jailed") then
+				local s = st.session
+				local floorY = s and s.O.Y or World.LOBBY.Y
+				if hrp.Position.Y < floorY - 30 then
+					if s then
+						local nearExit = s.exit and (hrp.Position - s.exit.exitOut.Position).Magnitude < 200
+						if nearExit then
+							place(p, s.exit.exitOut * CFrame.new(0, 4, 6), false)
+						else
+							place(p, s.clearing.liftSpawn, false)
+						end
+					else
+						place(p, lobby.spawn.CFrame + V(0, 4, 0), false)
+					end
+					notify(p, "Ты упал! Возвращаем обратно.")
+				end
+			end
+		end
+	end
+end)
+
 -- карта лабиринта: стены отправляются клиентам (рисуются по Tab)
 function sendMap(s)
 	local walls = {}
@@ -2190,6 +2254,31 @@ R.Crouch.OnServerEvent:Connect(function(p, on)
 		end
 	end
 	p:SetAttribute("Crouched", on)
+	-- поза приседа видна всем: туловище ниже и наклонено, ноги согнуты
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local torso = char:FindFirstChild("Torso")
+	local joints = {
+		hrp and hrp:FindFirstChild("RootJoint"),
+		torso and torso:FindFirstChild("Right Hip"),
+		torso and torso:FindFirstChild("Left Hip"),
+	}
+	for k, j in ipairs(joints) do
+		if j and j:IsA("Motor6D") then
+			local c0 = j:GetAttribute("C0Base")
+			if not c0 then
+				c0 = j.C0
+				j:SetAttribute("C0Base", c0)
+			end
+			if not on then
+				j.C0 = c0
+			elseif k == 1 then
+				j.C0 = CFrame.new(0, -1, 0) * CFrame.Angles(math.rad(-20), 0, 0) * c0
+			else
+				local pivot = c0.Position
+				j.C0 = CFrame.new(pivot) * CFrame.Angles(math.rad(55), 0, 0) * CFrame.new(-pivot) * c0
+			end
+		end
+	end
 end)
 
 ------------------------------------------------------------------

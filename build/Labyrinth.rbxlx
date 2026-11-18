@@ -1455,6 +1455,7 @@ end)
 -- Ранение и подъём
 ------------------------------------------------------------------
 local respawnAtClearing
+local returnToLobby
 
 -- тряпичная кукла: суставы становятся шарнирами, тело падает и болтается
 local function setRagdoll(char, on)
@@ -1620,10 +1621,16 @@ local function checkAllDowned(s)
 			return
 		end
 	end
-	notifySession(s, "Все ранены... Вы очнулись у лифта на поляне.")
-	for _, p in ipairs(s.players) do
-		respawnAtClearing(p)
-	end
+	-- поднять некому — все возвращаются в лобби
+	notifySession(s, "Все ранены, и помочь некому... Вы возвращаетесь в лобби.")
+	local list = table.clone(s.players)
+	task.delay(3, function()
+		for _, p in ipairs(list) do
+			if state[p] and state[p].session == s then
+				returnToLobby(p)
+			end
+		end
+	end)
 end
 
 local function down(p)
@@ -1692,8 +1699,8 @@ local function down(p)
 	local token = st.downedAt
 	task.delay(Config.DownedTime, function()
 		if st.downed and st.downedAt == token and st.session == s then
-			notify(p, "Ты очнулся у лифта на поляне.")
-			respawnAtClearing(p)
+			notify(p, "Тебя не успели поднять... Ты в лобби.")
+			returnToLobby(p)
 		end
 	end)
 	checkAllDowned(s)
@@ -2526,6 +2533,63 @@ local function leaveSession(p)
 	end
 end
 
+-- вернуть игрока в лобби (умер, и поднять некому)
+function returnToLobby(p)
+	local st = state[p]
+	if not st then
+		return
+	end
+	if st.revivePrompt then
+		st.revivePrompt:Destroy()
+		st.revivePrompt = nil
+	end
+	if st.dragPrompt then
+		st.dragPrompt:Destroy()
+		st.dragPrompt = nil
+	end
+	if st.draggedBy then
+		stopDrag(st.draggedBy)
+	end
+	stopDrag(p)
+	st.downed = false
+	st.hidden, st.sleeping = nil, nil
+	leaveSession(p)
+	p:SetAttribute("Downed", false)
+	p:SetAttribute("Hidden", false)
+	p:SetAttribute("Sleeping", false)
+	p:SetAttribute("InMatch", false)
+	freshInventory(p)
+	p:LoadCharacter()
+end
+
+-- упал в пропасть или в пустоту — возвращаем обратно
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		for _, p in ipairs(Players:GetPlayers()) do
+			local st = state[p]
+			local hrp = hrpOf(p)
+			if st and hrp and not p:GetAttribute("Jailed") then
+				local s = st.session
+				local floorY = s and s.O.Y or World.LOBBY.Y
+				if hrp.Position.Y < floorY - 30 then
+					if s then
+						local nearExit = s.exit and (hrp.Position - s.exit.exitOut.Position).Magnitude < 200
+						if nearExit then
+							place(p, s.exit.exitOut * CFrame.new(0, 4, 6), false)
+						else
+							place(p, s.clearing.liftSpawn, false)
+						end
+					else
+						place(p, lobby.spawn.CFrame + V(0, 4, 0), false)
+					end
+					notify(p, "Ты упал! Возвращаем обратно.")
+				end
+			end
+		end
+	end
+end)
+
 -- карта лабиринта: стены отправляются клиентам (рисуются по Tab)
 function sendMap(s)
 	local walls = {}
@@ -3227,6 +3291,31 @@ R.Crouch.OnServerEvent:Connect(function(p, on)
 		end
 	end
 	p:SetAttribute("Crouched", on)
+	-- поза приседа видна всем: туловище ниже и наклонено, ноги согнуты
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local torso = char:FindFirstChild("Torso")
+	local joints = {
+		hrp and hrp:FindFirstChild("RootJoint"),
+		torso and torso:FindFirstChild("Right Hip"),
+		torso and torso:FindFirstChild("Left Hip"),
+	}
+	for k, j in ipairs(joints) do
+		if j and j:IsA("Motor6D") then
+			local c0 = j:GetAttribute("C0Base")
+			if not c0 then
+				c0 = j.C0
+				j:SetAttribute("C0Base", c0)
+			end
+			if not on then
+				j.C0 = c0
+			elseif k == 1 then
+				j.C0 = CFrame.new(0, -1, 0) * CFrame.Angles(math.rad(-20), 0, 0) * c0
+			else
+				local pivot = c0.Position
+				j.C0 = CFrame.new(pivot) * CFrame.Angles(math.rad(55), 0, 0) * CFrame.new(-pivot) * c0
+			end
+		end
+	end
 end)
 
 ------------------------------------------------------------------
@@ -5477,8 +5566,25 @@ function World.BuildMazeLayout(parent, seed, O, fixed)
 		return p.a < q.a
 	end)
 	local run
+	-- факелы на стенах лабиринта, чтобы в коридорах было светлее
+	local torchN = 0
+	local function wallTorch(axis, fixedC, a, b, th)
+		if torchN >= 140 or b - a < 20 or rng:NextNumber() > 0.35 then
+			return
+		end
+		torchN += 1
+		local along = (a + b) / 2
+		local side = rng:NextNumber() < 0.5 and -1 or 1
+		local off = th / 2 + 0.6
+		local p = axis == "X" and V(along, 11, fixedC + side * off) or V(fixedC + side * off, 11, along)
+		local holder = Parts.box(m, "TorchHolder", CFrame.new(O + p - V(0, 1, 0)), V(0.6, 1.6, 0.6), RGB(50, 44, 40), M.Metal, NOCOLLIDE)
+		local flame = Parts.box(m, "WallTorch", CFrame.new(O + p + V(0, 0.4, 0)), V(0.8, 1, 0.8), RGB(255, 160, 70), M.Neon, NOCOLLIDE)
+		Parts.light(flame, 34, 1.4, RGB(255, 175, 100), true)
+		local _ = holder
+	end
 	local function flush()
 		if run then
+			wallTorch(run.axis, run.fixed, run.a, run.b, run.h > H1 and T * 2 or T)
 			local th = run.h > H1 and T * 2 or T
 			wallPart("MazeWall", run.axis, run.fixed, run.a - T / 2, run.b + T / 2, 0, run.h, th)
 			-- карниз сверху, тёмный цоколь со мхом снизу, у высоких стен — пояс посередине
@@ -5640,9 +5746,11 @@ function World.BuildExit(parent, O, ex)
 	local STEEL_D = RGB(60, 64, 70)
 
 	-- 1. короткий широкий проход: стены кольца продолжаются до самой пропасти
-	local pitStart, pitEnd = 10, 44
+	-- пропасть короче, перед дверью — широкая площадка, чтобы не упасть
+	local pitStart, pitEnd = 10, 34
+	local face = -(pitEnd + 14)
 	for _, sx in ipairs({ -1, 1 }) do
-		Parts.box(m, "ExitWall", b * CFrame.new(sx * (W / 2 + T), H2 / 2, -(pitEnd + 4) / 2), V(T * 2, H2, pitEnd + 4), WALL_DARK, M.Slate)
+		Parts.box(m, "ExitWall", b * CFrame.new(sx * (W / 2 + T), H2 / 2, face / 2), V(T * 2, H2, -face), WALL_DARK, M.Slate)
 		for d = 6, pitEnd, 12 do
 			local lamp = Parts.box(m, "ExitLamp", b * CFrame.new(sx * (W / 2 - 0.6), 14, -d), V(0.8, 1.8, 1.4), RGB(255, 200, 120), M.Neon)
 			Parts.light(lamp, 34, 1.3, RGB(255, 190, 120), d > 20)
@@ -5679,7 +5787,11 @@ function World.BuildExit(parent, O, ex)
 	end
 
 	-- 3. фасад лаборатории закрывает весь проход
-	local face = -(pitEnd + 2)
+	-- площадка перед дверью (со считывателем), на всю ширину прохода
+	Parts.box(m, "Landing", b * CFrame.new(0, 0.15, (face - pitEnd) / 2), V(W, 0.3, -face - pitEnd), RGB(78, 76, 72), M.Concrete)
+	for _, sx in ipairs({ -1, 1 }) do
+		Parts.box(m, "LandingRail", b * CFrame.new(sx * (5.5 + (W / 2 - 6) / 2), 1.8, -pitEnd - 0.3), V(W / 2 - 6, 3.4, 0.4), RGB(60, 64, 70), M.Metal)
+	end
 	local FW, FH = W + 40, 60
 	local doorW, doorH = 20, 18
 	Parts.box(m, "LabFacade", b * CFrame.new(-(doorW / 2 + (FW - doorW) / 4), FH / 2, face), V((FW - doorW) / 2, FH, 4), STEEL, M.DiamondPlate)
@@ -6290,7 +6402,7 @@ local function refreshRes()
 	resPanel.Visible = #resPanel:GetChildren() > 2
 end
 
-local hotbar = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(0, 0, 0, 64), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1 }, gui)
+local hotbar = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(0, 0, 0, 76), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1 }, gui)
 make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, hotbar)
 local tools = {}
 local equipped = nil
@@ -6324,6 +6436,38 @@ local function hotbarList()
 	return list
 end
 
+-- маленькая 3D-картинка предмета (топор, факел, верстак...) для ячейки
+local ItemModels = require(Shared:WaitForChild("ItemModels"))
+local DeployModels = require(Shared:WaitForChild("Deployables"))
+local function itemIcon(id, parent)
+	local vp = make("ViewportFrame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 2), Size = UDim2.fromOffset(46, 46), BackgroundTransparency = 1, Ambient = RGB(200, 200, 200), LightColor = RGB(255, 255, 255), LightDirection = Vector3.new(-1, -1, -1) }, parent)
+	local def = Items.Tools[id]
+	local ok, model = pcall(function()
+		if def and def.Kind == "deploy" then
+			return DeployModels.build(def.Deploy, CFrame.new())
+		end
+		return ItemModels.build(id)
+	end)
+	if not ok or not model then
+		return vp
+	end
+	if not def or def.Kind == "fists" then
+		model:Destroy()
+		make("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 28, Text = "✊", TextColor3 = RGB(255, 255, 255) }, vp)
+		return vp
+	end
+	model.Parent = vp
+	local cf, size = model:GetBoundingBox()
+	local cam = Instance.new("Camera")
+	cam.FieldOfView = 40
+	local dist = math.max(size.X, size.Y, size.Z) * 1.6 + 0.5
+	-- предмет повёрнут наискосок, чтобы было понятно, что это
+	cam.CFrame = CFrame.lookAt(cf.Position + Vector3.new(dist * 0.55, dist * 0.35, dist * 0.75), cf.Position)
+	cam.Parent = vp
+	vp.CurrentCamera = cam
+	return vp
+end
+
 local function refreshHotbar()
 	for _, c in ipairs(hotbar:GetChildren()) do
 		if c:IsA("TextButton") then
@@ -6332,17 +6476,21 @@ local function refreshHotbar()
 	end
 	for i, id in ipairs(hotbarList()) do
 		local b = make("TextButton", {
-			Size = UDim2.new(0, 96, 0, 64),
+			Size = UDim2.new(0, 96, 0, 76),
 			BackgroundColor3 = id == equipped and RGB(70, 90, 50) or RGB(18, 20, 18),
 			BackgroundTransparency = 0.25,
 			Font = UI_FONT,
-			TextSize = 12,
+			TextSize = 11,
 			TextWrapped = true,
+			TextYAlignment = Enum.TextYAlignment.Bottom,
 			TextColor3 = RGB(235, 230, 215),
-			Text = i .. "\n" .. Items.toolName(id),
+			Text = Items.toolName(id),
 			LayoutOrder = i,
 		}, hotbar)
 		corner(b, 8)
+		make("UIPadding", { PaddingBottom = UDim.new(0, 3), PaddingLeft = UDim.new(0, 3), PaddingRight = UDim.new(0, 3) }, b)
+		itemIcon(id, b)
+		make("TextLabel", { Position = UDim2.fromOffset(2, 0), Size = UDim2.fromOffset(16, 16), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 13, TextColor3 = RGB(255, 230, 150), Text = tostring(i) }, b)
 		if id == equipped then
 			make("UIStroke", { Color = RGB(200, 230, 140), Thickness = 2 }, b)
 		end
@@ -7485,12 +7633,13 @@ local function applyLighting(phase, a)
 		return x:Lerp(y, night)
 	end
 	Lighting.ClockTime = clock
-	Lighting.Brightness = 4 - night * 2.6
-	Lighting.ExposureCompensation = 0.35 - night * 0.1
-	Lighting.Ambient = mix(RGB(120, 115, 105), RGB(48, 52, 72))
-	Lighting.OutdoorAmbient = mix(RGB(185, 180, 170), RGB(70, 80, 110))
+	-- светлее: даже ночью всё хорошо видно (лунный свет)
+	Lighting.Brightness = 4.5 - night * 2.2
+	Lighting.ExposureCompensation = 0.6 - night * 0.05
+	Lighting.Ambient = mix(RGB(150, 145, 135), RGB(95, 102, 130))
+	Lighting.OutdoorAmbient = mix(RGB(200, 196, 186), RGB(120, 130, 165))
 	if atmo then
-		atmo.Density = 0.25 + night * 0.12
+		atmo.Density = 0.22 + night * 0.08
 		atmo.Haze = 1.2 + night * 1.2
 		atmo.Color = mix(RGB(200, 190, 170), RGB(60, 70, 100))
 		atmo.Decay = mix(RGB(110, 100, 90), RGB(20, 22, 40))
