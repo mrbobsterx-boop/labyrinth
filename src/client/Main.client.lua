@@ -1756,8 +1756,8 @@ function updateMusic(dt)
 	musicSound.Volume = musicSound.Volume + (target - musicSound.Volume) * math.min(1, (dt or 0.016) * 2)
 end
 
--- кнопка настроек всегда на виду (слева вверху, рядом с меню Roblox)
-local gearB = make("TextButton", { Position = UDim2.fromOffset(250, 12), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = RGB(20, 22, 26), BackgroundTransparency = 0.3, Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = RGB(240, 240, 240), Text = "⚙" }, gui)
+-- кнопка настроек всегда на виду (справа вверху, в углу)
+local gearB = make("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 12), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = RGB(20, 22, 26), BackgroundTransparency = 0.3, Font = Enum.Font.GothamBlack, TextSize = 26, TextColor3 = RGB(240, 240, 240), Text = "⚙" }, gui)
 corner(gearB, 100)
 gearB.Activated:Connect(function()
 	settingsPanel.Visible = not settingsPanel.Visible
@@ -2015,7 +2015,7 @@ end)
 -- Тестовые кнопки
 ------------------------------------------------------------------
 if Config.DevTools then
-	local bar = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 60), Size = UDim2.new(0, 190, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, gui)
+	local bar = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 68), Size = UDim2.new(0, 190, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, gui)
 	-- админ-кнопки видны только после ввода кода в Настройки → Админ-панель
 	-- уровень 1 (код друзей) — часть кнопок, уровень 2 (главный код) — все
 	local levelOf = {}
