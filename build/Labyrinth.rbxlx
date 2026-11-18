@@ -1268,6 +1268,7 @@ end
 
 local updateHeld
 local applyInvisible
+local putInJail
 local function addRes(p, k, n)
 	local st = state[p]
 	st.res[k] = math.max(0, (st.res[k] or 0) + n)
@@ -3298,6 +3299,10 @@ local function onCharacter(p, char)
 		if p:GetAttribute("Invisible") then
 			applyInvisible(p)
 		end
+		-- из тюрьмы не сбежать перезаходом в персонажа
+		if p:GetAttribute("Jailed") then
+			putInJail(p)
+		end
 	end)
 	p:SetAttribute("Hidden", false)
 	p:SetAttribute("Sleeping", false)
@@ -3384,6 +3389,65 @@ function applyInvisible(p)
 		hum.NameDisplayDistance = on and 0 or 100
 	end
 	p:SetAttribute("DevGhost", on)
+end
+
+-- тюрьма: каменная клетка далеко-далеко в пустоте
+local JAIL = V(-6000, 400, -6000)
+local function buildJail()
+	local m = Instance.new("Model")
+	m.Name = "Jail"
+	local function box(cf, size, color, mat, transp)
+		local pt = Instance.new("Part")
+		pt.Anchored = true
+		pt.Size = size
+		pt.CFrame = cf
+		pt.Color = color
+		pt.Material = mat
+		pt.Transparency = transp or 0
+		pt.Parent = m
+		return pt
+	end
+	local stone, dark = Color3.fromRGB(70, 70, 74), Color3.fromRGB(40, 40, 44)
+	box(CFrame.new(JAIL), V(24, 2, 24), stone, Enum.Material.Slate)
+	box(CFrame.new(JAIL + V(0, 16, 0)), V(24, 2, 24), stone, Enum.Material.Slate)
+	for _, d in ipairs({ V(1, 0, 0), V(-1, 0, 0), V(0, 0, 1), V(0, 0, -1) }) do
+		local wallCF = CFrame.new(JAIL + d * 11 + V(0, 8, 0))
+		local size = d.X ~= 0 and V(2, 14, 24) or V(24, 14, 2)
+		if d.Z == -1 then
+			-- стена из решётки: всё видно, но не выйти
+			box(wallCF, size, dark, Enum.Material.Glass, 0.7)
+			for k = -10, 10, 2 do
+				box(CFrame.new(JAIL + d * 11 + V(k, 8, 0)), V(0.4, 14, 0.4), dark, Enum.Material.Metal)
+			end
+		else
+			box(wallCF, size, stone, Enum.Material.Slate)
+		end
+	end
+	local lamp = box(CFrame.new(JAIL + V(0, 14.6, 0)), V(4, 0.4, 4), Color3.fromRGB(255, 230, 180), Enum.Material.Neon)
+	local l = Instance.new("PointLight")
+	l.Range = 24
+	l.Parent = lamp
+	local sign = box(CFrame.new(JAIL + V(0, 13, -9.8)), V(12, 2.4, 0.2), Color3.fromRGB(20, 20, 20), Enum.Material.SmoothPlastic)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Back
+	sg.Parent = sign
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = Color3.fromRGB(255, 80, 70)
+	t.Text = "ТЮРЬМА"
+	t.Parent = sg
+	m.Parent = workspace
+end
+buildJail()
+
+function putInJail(p)
+	local hrp = hrpOf(p)
+	if hrp then
+		place(p, CFrame.new(JAIL + V(0, 4, 0)), false)
+	end
 end
 
 -- центр «главного острова»: поляна сессии админа или лобби
@@ -3616,6 +3680,44 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 		local th = target and hrpOf(target)
 		if th then
 			place(p, th.CFrame * CFrame.new(0, 0, 6), false)
+		end
+	elseif action == "bring" and typeof(value) == "number" then
+		-- телепортировать игрока к себе
+		local target = Players:GetPlayerByUserId(value)
+		local mh = hrpOf(p)
+		if target and target ~= p and mh and not target:GetAttribute("Jailed") then
+			place(target, mh.CFrame * CFrame.new(0, 0, -6), false)
+			notify(target, "Админ телепортировал тебя к себе")
+		end
+	elseif action == "kick" and typeof(value) == "number" then
+		-- выгнать с сервера (зайти снова можно)
+		local target = Players:GetPlayerByUserId(value)
+		if target and target ~= p then
+			target:Kick("Тебя выгнал админ. Можешь зайти снова.")
+		end
+	elseif action == "jail" and typeof(value) == "number" then
+		-- посадить в тюрьму / выпустить
+		local target = Players:GetPlayerByUserId(value)
+		if target and target ~= p then
+			if target:GetAttribute("Jailed") then
+				target:SetAttribute("Jailed", false)
+				target:LoadCharacter()
+				notify(target, "Тебя выпустили из тюрьмы!")
+				notify(p, target.DisplayName .. " на свободе")
+			else
+				leaveSession(target)
+				local tst = state[target]
+				if tst then
+					tst.downed = false
+				end
+				target:SetAttribute("InMatch", false)
+				target:SetAttribute("Downed", false)
+				target:SetAttribute("Jailed", true)
+				-- новый персонаж сразу появится в тюрьме
+				target:LoadCharacter()
+				notify(target, "Админ посадил тебя в тюрьму!")
+				notify(p, target.DisplayName .. " в тюрьме")
+			end
 		end
 	elseif action == "nuke" then
 		nuke(p)
@@ -8158,12 +8260,71 @@ if Config.DevTools then
 			workspace.CurrentCamera.CameraSubject = hum
 		end
 	end, 2, RGB(30, 60, 90))
-	btn("ТП к игроку", function()
-		local q = spectating or nextPlayer()
-		if q then
-			remote("Dev"):FireServer("tpto", q.UserId)
+	-- меню игроков: все, кто сейчас на сервере; ТП к нему, к себе, кик, тюрьма
+	local plPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(560, 420), BackgroundColor3 = RGB(22, 24, 28), Visible = false, ZIndex = 30 }, gui)
+	corner(plPanel, 14)
+	make("UIStroke", { Color = RGB(200, 140, 60), Thickness = 2 }, plPanel)
+	make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, plPanel)
+	make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(255, 210, 140), Text = "ИГРОКИ НА СЕРВЕРЕ", ZIndex = 31 }, plPanel)
+	local plList = make("ScrollingFrame", { Position = UDim2.fromOffset(14, 48), Size = UDim2.new(1, -28, 1, -110), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 31 }, plPanel)
+	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, plList)
+	local closeP = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.fromOffset(160, 40), BackgroundColor3 = RGB(90, 40, 30), Font = UI_FONT, TextSize = 17, TextColor3 = RGB(255, 255, 255), Text = "Закрыть", ZIndex = 31 }, plPanel)
+	corner(closeP, 8)
+	closeP.Activated:Connect(function()
+		plPanel.Visible = false
+	end)
+	local function renderPlayers()
+		for _, c in ipairs(plList:GetChildren()) do
+			if c:IsA("Frame") then
+				c:Destroy()
+			end
 		end
+		local n = 0
+		for _, q in ipairs(Players:GetPlayers()) do
+			if q ~= player then
+				n += 1
+				local row = make("Frame", { Size = UDim2.new(1, -8, 0, 46), BackgroundColor3 = RGB(36, 38, 44), LayoutOrder = n, ZIndex = 31 }, plList)
+				corner(row, 8)
+				local jailed = q:GetAttribute("Jailed") == true
+				make("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0, 150, 1, 0), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextColor3 = jailed and RGB(255, 120, 110) or RGB(240, 240, 235), Text = q.DisplayName .. (jailed and " (в тюрьме)" or ""), ZIndex = 32 }, row)
+				local x = 166
+				local function act(text, color, fn)
+					local b = make("TextButton", { Position = UDim2.fromOffset(x, 7), Size = UDim2.fromOffset(88, 32), BackgroundColor3 = color, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 32 }, row)
+					corner(b, 6)
+					b.Activated:Connect(fn)
+					x += 94
+				end
+				act("ТП к нему", RGB(40, 90, 140), function()
+					remote("Dev"):FireServer("tpto", q.UserId)
+					plPanel.Visible = false
+				end)
+				act("К себе", RGB(40, 120, 90), function()
+					remote("Dev"):FireServer("bring", q.UserId)
+				end)
+				act("Кикнуть", RGB(150, 70, 30), function()
+					remote("Dev"):FireServer("kick", q.UserId)
+					task.delay(0.6, renderPlayers)
+				end)
+				act(jailed and "Выпустить" or "В тюрьму", RGB(120, 30, 30), function()
+					remote("Dev"):FireServer("jail", q.UserId)
+					task.delay(0.6, renderPlayers)
+				end)
+			end
+		end
+		if n == 0 then
+			local row = make("Frame", { Size = UDim2.new(1, -8, 0, 46), BackgroundTransparency = 1, ZIndex = 31 }, plList)
+			make("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 16, TextColor3 = RGB(200, 200, 200), Text = "Кроме тебя, на сервере никого нет", ZIndex = 32 }, row)
+		end
+	end
+	btn("👥 Игроки (ТП, кик, тюрьма)", function()
+		renderPlayers()
+		plPanel.Visible = true
 	end, 2, RGB(30, 60, 90))
+	RunService.RenderStepped:Connect(function()
+		if plPanel.Visible then
+			UserInputService.MouseIconEnabled = true
+		end
+	end)
 	btn("☢ Ядерка на поляну", function()
 		remote("Dev"):FireServer("nuke")
 	end, 2, RGB(120, 60, 20))

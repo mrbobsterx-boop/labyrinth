@@ -2182,12 +2182,71 @@ if Config.DevTools then
 			workspace.CurrentCamera.CameraSubject = hum
 		end
 	end, 2, RGB(30, 60, 90))
-	btn("ТП к игроку", function()
-		local q = spectating or nextPlayer()
-		if q then
-			remote("Dev"):FireServer("tpto", q.UserId)
+	-- меню игроков: все, кто сейчас на сервере; ТП к нему, к себе, кик, тюрьма
+	local plPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(560, 420), BackgroundColor3 = RGB(22, 24, 28), Visible = false, ZIndex = 30 }, gui)
+	corner(plPanel, 14)
+	make("UIStroke", { Color = RGB(200, 140, 60), Thickness = 2 }, plPanel)
+	make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, plPanel)
+	make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(255, 210, 140), Text = "ИГРОКИ НА СЕРВЕРЕ", ZIndex = 31 }, plPanel)
+	local plList = make("ScrollingFrame", { Position = UDim2.fromOffset(14, 48), Size = UDim2.new(1, -28, 1, -110), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 31 }, plPanel)
+	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, plList)
+	local closeP = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.fromOffset(160, 40), BackgroundColor3 = RGB(90, 40, 30), Font = UI_FONT, TextSize = 17, TextColor3 = RGB(255, 255, 255), Text = "Закрыть", ZIndex = 31 }, plPanel)
+	corner(closeP, 8)
+	closeP.Activated:Connect(function()
+		plPanel.Visible = false
+	end)
+	local function renderPlayers()
+		for _, c in ipairs(plList:GetChildren()) do
+			if c:IsA("Frame") then
+				c:Destroy()
+			end
 		end
+		local n = 0
+		for _, q in ipairs(Players:GetPlayers()) do
+			if q ~= player then
+				n += 1
+				local row = make("Frame", { Size = UDim2.new(1, -8, 0, 46), BackgroundColor3 = RGB(36, 38, 44), LayoutOrder = n, ZIndex = 31 }, plList)
+				corner(row, 8)
+				local jailed = q:GetAttribute("Jailed") == true
+				make("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0, 150, 1, 0), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextColor3 = jailed and RGB(255, 120, 110) or RGB(240, 240, 235), Text = q.DisplayName .. (jailed and " (в тюрьме)" or ""), ZIndex = 32 }, row)
+				local x = 166
+				local function act(text, color, fn)
+					local b = make("TextButton", { Position = UDim2.fromOffset(x, 7), Size = UDim2.fromOffset(88, 32), BackgroundColor3 = color, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 32 }, row)
+					corner(b, 6)
+					b.Activated:Connect(fn)
+					x += 94
+				end
+				act("ТП к нему", RGB(40, 90, 140), function()
+					remote("Dev"):FireServer("tpto", q.UserId)
+					plPanel.Visible = false
+				end)
+				act("К себе", RGB(40, 120, 90), function()
+					remote("Dev"):FireServer("bring", q.UserId)
+				end)
+				act("Кикнуть", RGB(150, 70, 30), function()
+					remote("Dev"):FireServer("kick", q.UserId)
+					task.delay(0.6, renderPlayers)
+				end)
+				act(jailed and "Выпустить" or "В тюрьму", RGB(120, 30, 30), function()
+					remote("Dev"):FireServer("jail", q.UserId)
+					task.delay(0.6, renderPlayers)
+				end)
+			end
+		end
+		if n == 0 then
+			local row = make("Frame", { Size = UDim2.new(1, -8, 0, 46), BackgroundTransparency = 1, ZIndex = 31 }, plList)
+			make("TextLabel", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 16, TextColor3 = RGB(200, 200, 200), Text = "Кроме тебя, на сервере никого нет", ZIndex = 32 }, row)
+		end
+	end
+	btn("👥 Игроки (ТП, кик, тюрьма)", function()
+		renderPlayers()
+		plPanel.Visible = true
 	end, 2, RGB(30, 60, 90))
+	RunService.RenderStepped:Connect(function()
+		if plPanel.Visible then
+			UserInputService.MouseIconEnabled = true
+		end
+	end)
 	btn("☢ Ядерка на поляну", function()
 		remote("Dev"):FireServer("nuke")
 	end, 2, RGB(120, 60, 20))

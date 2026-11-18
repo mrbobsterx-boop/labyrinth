@@ -231,6 +231,7 @@ end
 
 local updateHeld
 local applyInvisible
+local putInJail
 local function addRes(p, k, n)
 	local st = state[p]
 	st.res[k] = math.max(0, (st.res[k] or 0) + n)
@@ -2261,6 +2262,10 @@ local function onCharacter(p, char)
 		if p:GetAttribute("Invisible") then
 			applyInvisible(p)
 		end
+		-- из тюрьмы не сбежать перезаходом в персонажа
+		if p:GetAttribute("Jailed") then
+			putInJail(p)
+		end
 	end)
 	p:SetAttribute("Hidden", false)
 	p:SetAttribute("Sleeping", false)
@@ -2347,6 +2352,65 @@ function applyInvisible(p)
 		hum.NameDisplayDistance = on and 0 or 100
 	end
 	p:SetAttribute("DevGhost", on)
+end
+
+-- тюрьма: каменная клетка далеко-далеко в пустоте
+local JAIL = V(-6000, 400, -6000)
+local function buildJail()
+	local m = Instance.new("Model")
+	m.Name = "Jail"
+	local function box(cf, size, color, mat, transp)
+		local pt = Instance.new("Part")
+		pt.Anchored = true
+		pt.Size = size
+		pt.CFrame = cf
+		pt.Color = color
+		pt.Material = mat
+		pt.Transparency = transp or 0
+		pt.Parent = m
+		return pt
+	end
+	local stone, dark = Color3.fromRGB(70, 70, 74), Color3.fromRGB(40, 40, 44)
+	box(CFrame.new(JAIL), V(24, 2, 24), stone, Enum.Material.Slate)
+	box(CFrame.new(JAIL + V(0, 16, 0)), V(24, 2, 24), stone, Enum.Material.Slate)
+	for _, d in ipairs({ V(1, 0, 0), V(-1, 0, 0), V(0, 0, 1), V(0, 0, -1) }) do
+		local wallCF = CFrame.new(JAIL + d * 11 + V(0, 8, 0))
+		local size = d.X ~= 0 and V(2, 14, 24) or V(24, 14, 2)
+		if d.Z == -1 then
+			-- стена из решётки: всё видно, но не выйти
+			box(wallCF, size, dark, Enum.Material.Glass, 0.7)
+			for k = -10, 10, 2 do
+				box(CFrame.new(JAIL + d * 11 + V(k, 8, 0)), V(0.4, 14, 0.4), dark, Enum.Material.Metal)
+			end
+		else
+			box(wallCF, size, stone, Enum.Material.Slate)
+		end
+	end
+	local lamp = box(CFrame.new(JAIL + V(0, 14.6, 0)), V(4, 0.4, 4), Color3.fromRGB(255, 230, 180), Enum.Material.Neon)
+	local l = Instance.new("PointLight")
+	l.Range = 24
+	l.Parent = lamp
+	local sign = box(CFrame.new(JAIL + V(0, 13, -9.8)), V(12, 2.4, 0.2), Color3.fromRGB(20, 20, 20), Enum.Material.SmoothPlastic)
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Back
+	sg.Parent = sign
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.fromScale(1, 1)
+	t.BackgroundTransparency = 1
+	t.TextScaled = true
+	t.Font = Enum.Font.GothamBlack
+	t.TextColor3 = Color3.fromRGB(255, 80, 70)
+	t.Text = "ТЮРЬМА"
+	t.Parent = sg
+	m.Parent = workspace
+end
+buildJail()
+
+function putInJail(p)
+	local hrp = hrpOf(p)
+	if hrp then
+		place(p, CFrame.new(JAIL + V(0, 4, 0)), false)
+	end
 end
 
 -- центр «главного острова»: поляна сессии админа или лобби
@@ -2579,6 +2643,44 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 		local th = target and hrpOf(target)
 		if th then
 			place(p, th.CFrame * CFrame.new(0, 0, 6), false)
+		end
+	elseif action == "bring" and typeof(value) == "number" then
+		-- телепортировать игрока к себе
+		local target = Players:GetPlayerByUserId(value)
+		local mh = hrpOf(p)
+		if target and target ~= p and mh and not target:GetAttribute("Jailed") then
+			place(target, mh.CFrame * CFrame.new(0, 0, -6), false)
+			notify(target, "Админ телепортировал тебя к себе")
+		end
+	elseif action == "kick" and typeof(value) == "number" then
+		-- выгнать с сервера (зайти снова можно)
+		local target = Players:GetPlayerByUserId(value)
+		if target and target ~= p then
+			target:Kick("Тебя выгнал админ. Можешь зайти снова.")
+		end
+	elseif action == "jail" and typeof(value) == "number" then
+		-- посадить в тюрьму / выпустить
+		local target = Players:GetPlayerByUserId(value)
+		if target and target ~= p then
+			if target:GetAttribute("Jailed") then
+				target:SetAttribute("Jailed", false)
+				target:LoadCharacter()
+				notify(target, "Тебя выпустили из тюрьмы!")
+				notify(p, target.DisplayName .. " на свободе")
+			else
+				leaveSession(target)
+				local tst = state[target]
+				if tst then
+					tst.downed = false
+				end
+				target:SetAttribute("InMatch", false)
+				target:SetAttribute("Downed", false)
+				target:SetAttribute("Jailed", true)
+				-- новый персонаж сразу появится в тюрьме
+				target:LoadCharacter()
+				notify(target, "Админ посадил тебя в тюрьму!")
+				notify(p, target.DisplayName .. " в тюрьме")
+			end
 		end
 	elseif action == "nuke" then
 		nuke(p)
