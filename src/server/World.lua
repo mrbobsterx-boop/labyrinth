@@ -111,8 +111,8 @@ local function node(parent, kind, pos, rng)
 			end
 		end
 	end
-	local p = prompt(main, def.Action, def.Name, 0.7, 11)
-	tag(p, "NodePrompt")
+	-- добывается ударами (ЛКМ), без «зажми E»
+	local _ = main
 	m.Parent = parent
 	tag(m, "Node")
 	return m
@@ -284,8 +284,8 @@ function World.BuildLobby()
 	bp("BoothFloor", CFrame.new(0, 0.2, 0), V(22, 0.4, 12), RGB(80, 60, 44), M.WoodPlanks)
 	bp("BoothGlow", CFrame.new(0, 0.05, -6.6), V(24, 0.1, 1.2), RGB(60, 255, 230), M.Neon, NOCOLLIDE)
 	for _, x in ipairs({ -10, -6, 6, 10 }) do
-		bp("BoothPost", CFrame.new(x, 7, -5), V(1.4, 14, 1.4), LOG, M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
-		bp("BoothPost", CFrame.new(x, 7, 5), V(1.4, 14, 1.4), LOG, M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+		bp("BoothPost", CFrame.new(x, 7, -5), V(1.4, 14, 1.4), LOG, M.Wood)
+		bp("BoothPost", CFrame.new(x, 7, 5), V(1.4, 14, 1.4), LOG, M.Wood)
 	end
 	bp("BoothBack", CFrame.new(0, 7, 5.6), V(22, 14, 0.6), PLANK, M.WoodPlanks)
 	bp("BoothRoof", CFrame.new(0, 14.4, 0) * CFrame.Angles(math.rad(-8), 0, 0), V(25, 0.8, 14), RGB(110, 70, 40), M.WoodPlanks)
@@ -296,9 +296,9 @@ function World.BuildLobby()
 	bp("RoofBeam", CFrame.new(0, 13.9, -7.1), V(25, 0.6, 0.6), TRIM, M.SmoothPlastic, NOCOLLIDE)
 	-- прилавок из бревна
 	local counter = bp("Counter", CFrame.new(0, 1.8, -3.8), V(18, 3.6, 2.2), PLANK, M.WoodPlanks)
-	bp("CounterLog", CFrame.new(0, 3.9, -3.8) * CFrame.Angles(0, math.pi / 2, 0), V(19, 1.6, 1.6), LOG, M.Wood, { Shape = Enum.PartType.Cylinder })
+	bp("CounterLog", CFrame.new(0, 3.9, -3.8), V(19, 1.6, 1.6), LOG, M.Wood, { Shape = Enum.PartType.Cylinder })
 	for _, x in ipairs({ -9.6, 9.6 }) do
-		bp("LogEnd", CFrame.new(x, 3.9, -3.8) * CFrame.Angles(0, math.pi / 2, 0), V(0.3, 1.7, 1.7), TRIM, M.Wood, { Shape = Enum.PartType.Cylinder, CanCollide = false })
+		bp("LogEnd", CFrame.new(x, 3.9, -3.8), V(0.3, 1.7, 1.7), TRIM, M.Wood, { Shape = Enum.PartType.Cylinder, CanCollide = false })
 	end
 	-- лампы-шары под крышей
 	for _, x in ipairs({ -9, -5, 5, 9 }) do

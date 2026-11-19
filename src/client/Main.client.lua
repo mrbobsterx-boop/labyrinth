@@ -222,6 +222,8 @@ local toggleMap, updateMap, updatePings
 local lobbyBar, updateMusic, settingsPanel, adminPanel
 local spectating, spectateIndex = nil, 0
 local torchPlace = true
+local slideUntil, wasSprinting = 0, false
+local openInventory, tryPickup
 local flyPad
 local openGive, openMoney, openClass
 local musicOn = true
@@ -763,6 +765,20 @@ task.spawn(function()
 	end
 end)
 
+-- R: забрать факел / верстак / сундук / кровать, на которые смотришь
+local PICKABLE = { PlacedTorch = true, Workbench = true, StorageChest = true, Bed = true }
+function tryPickup()
+	local r = aimRay(12)
+	local m = r and r.Instance:FindFirstAncestorOfClass("Model")
+	while m and not PICKABLE[m.Name] do
+		m = m:FindFirstAncestorOfClass("Model")
+	end
+	if m then
+		remote("Pickup"):FireServer(m)
+		sound(Config.Sounds.Pickup, 0.5, 1)
+	end
+end
+
 local function doSwing()
 	if not inMatch() or cutscene or craft.Visible then
 		return
@@ -820,6 +836,12 @@ local sprintHeld = false
 local flyingNow = false
 local crouched = false
 local function setCrouch(on)
+	-- подкат: бегун 3-й стадии нажимает Ctrl на бегу
+	if on and wasSprinting and player:GetAttribute("Class") == "runner" and (player:GetAttribute("ClassLevel") or 1) >= 3 then
+		slideUntil = os.clock() + 0.7
+		sound(Config.Sounds.Swing, 0.7, 0.6)
+		shake(0.2)
+	end
 	crouched = on
 	remote("Crouch"):FireServer(on)
 	local char = player.Character
@@ -848,6 +870,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		elseif kind == "deploy" then
 			BuildMode.rotate()
 			sound(Config.Sounds.Click, 0.4, 1.2)
+		else
+			tryPickup()
 		end
 	elseif (input.KeyCode == Enum.KeyCode.Tab or input.KeyCode == Enum.KeyCode.DPadUp) and inMatch() and not cutscene then
 		toggleMap()
@@ -870,9 +894,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			equip(hb[i])
 			refreshHotbar()
 		end
-	elseif input.KeyCode == Enum.KeyCode.Q then
-		equip(nil)
-		refreshHotbar()
+	elseif (input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonSelect) and inMatch() and not cutscene then
+		openInventory()
 	else
 		local n = input.KeyCode.Value - Enum.KeyCode.One.Value + 1
 		local hb = hotbarList()
@@ -1615,10 +1638,10 @@ local function updateLiftPanel()
 end
 
 -- магазин классов
-local shopPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 560, 0, 470), BackgroundColor3 = RGB(26, 22, 18), Visible = false, ZIndex = 12 }, gui)
+local shopPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 640, 0, 520), BackgroundColor3 = RGB(26, 22, 18), Visible = false, ZIndex = 12 }, gui)
 corner(shopPanel, 12)
 make("TextLabel", { Position = UDim2.new(0, 16, 0, 10), Size = UDim2.new(1, -32, 0, 36), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 24, TextColor3 = RGB(255, 210, 90), Text = "ТОРГОВЕЦ КЛАССАМИ", ZIndex = 12 }, shopPanel)
-local shopList = make("Frame", { Position = UDim2.new(0, 14, 0, 54), Size = UDim2.new(1, -28, 1, -116), BackgroundTransparency = 1, ZIndex = 12 }, shopPanel)
+local shopList = make("ScrollingFrame", { Position = UDim2.new(0, 14, 0, 54), Size = UDim2.new(1, -28, 1, -116), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 12 }, shopPanel)
 make("UIListLayout", { Padding = UDim.new(0, 6) }, shopList)
 local shopClose = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.new(0, 160, 0, 40), BackgroundColor3 = RGB(90, 40, 30), Font = UI_FONT, TextSize = 18, TextColor3 = RGB(255, 240, 230), Text = "Закрыть", Modal = true, ZIndex = 12 }, shopPanel)
 corner(shopClose, 8)
@@ -1639,7 +1662,16 @@ local function renderShop()
 		if c.Hidden and not table.find(owned, c.Id) then
 			continue
 		end
-		local row = make("Frame", { Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = RGB(44, 38, 30), ZIndex = 12 }, shopList)
+		local row = make("Frame", { Size = UDim2.new(1, -8, 0, 84), BackgroundColor3 = RGB(44, 38, 30), ZIndex = 12 }, shopList)
+		local levels = {}
+		pcall(function()
+			levels = HttpService:JSONDecode(player:GetAttribute("ClassLevels") or "{}")
+		end)
+		local lv = math.clamp(tonumber(levels[c.Id]) or 1, 1, 3)
+		local stages = Config.ClassLevels[c.Id]
+		if stages then
+			make("TextLabel", { Position = UDim2.new(0, 10, 0, 54), Size = UDim2.new(1, -150, 0, 22), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(150, 220, 140), Text = "Стадия " .. lv .. "/3: " .. stages[lv], ZIndex = 12 }, row)
+		end
 		-- картинки того, с чем появляется класс
 		for k, item in ipairs(c.Items or {}) do
 			local vp = itemIcon(item, row)
@@ -1652,12 +1684,21 @@ local function renderShop()
 		make("TextLabel", { Position = UDim2.new(0, 10, 0, 28), Size = UDim2.new(1, -250, 0, 24), BackgroundTransparency = 1, Font = TEXT_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 180, 160), Text = c.Desc, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 12 }, row)
 		local has = table.find(owned, c.Id) ~= nil
 		local current = player:GetAttribute("Class") == c.Id
-		local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.new(0, 120, 0, 38), BackgroundColor3 = current and RGB(80, 80, 80) or (has and RGB(60, 90, 140) or RGB(60, 120, 60)), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(255, 255, 255), Text = current and "Выбран" or (has and "Выбрать" or "Купить"), ZIndex = 12 }, row)
+		local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 8), Size = UDim2.new(0, 120, 0, 38), BackgroundColor3 = current and RGB(80, 80, 80) or (has and RGB(60, 90, 140) or RGB(60, 120, 60)), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(255, 255, 255), Text = current and "Выбран" or (has and "Выбрать" or "Купить"), ZIndex = 12 }, row)
 		corner(b, 6)
 		b.MouseButton1Click:Connect(function()
 			remote("ShopBuy"):FireServer(c.Id)
 			task.delay(0.4, renderShop)
 		end)
+		local nextCost = Config.ClassUpgradeCost[lv + 1]
+		if has and stages and nextCost then
+			local u = make("TextButton", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -10, 1, -6), Size = UDim2.new(0, 120, 0, 24), BackgroundColor3 = RGB(150, 110, 30), Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = "⬆ Улучшить · " .. nextCost .. " 🪙", ZIndex = 12 }, row)
+			corner(u, 6)
+			u.MouseButton1Click:Connect(function()
+				remote("ClassUpgrade"):FireServer(c.Id)
+				task.delay(0.4, renderShop)
+			end)
+		end
 	end
 end
 remote("ShopOpen").OnClientEvent:Connect(function()
@@ -1866,6 +1907,140 @@ remote("Prank").OnClientEvent:Connect(function(kind)
 	end
 end)
 
+-- ИНВЕНТАРЬ (Q / кнопка ИНВЕНТ / Select на контроллере)
+local invPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.48), Size = UDim2.fromOffset(620, 440), BackgroundColor3 = RGB(24, 22, 20), Visible = false, ZIndex = 26 }, gui)
+corner(invPanel, 14)
+make("UIStroke", { Color = RGB(170, 140, 90), Thickness = 2 }, invPanel)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, invPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(245, 230, 190), Text = "ИНВЕНТАРЬ", ZIndex = 27 }, invPanel)
+local invGrid = make("ScrollingFrame", { Position = UDim2.fromOffset(14, 46), Size = UDim2.new(1, -28, 1, -110), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 27 }, invPanel)
+make("UIGridLayout", { CellSize = UDim2.fromOffset(110, 96), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }, invGrid)
+local function invButton(text, x, color, fn)
+	local b = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, x, 1, -12), Size = UDim2.fromOffset(170, 40), BackgroundColor3 = color, Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 27 }, invPanel)
+	corner(b, 8)
+	b.Activated:Connect(fn)
+end
+local function renderInventory()
+	for _, c in ipairs(invGrid:GetChildren()) do
+		if c:IsA("GuiObject") then
+			c:Destroy()
+		end
+	end
+	local n = 0
+	-- предметы: нажми — взять в руку
+	for _, id in ipairs(hotbarList()) do
+		n += 1
+		local b = make("TextButton", { BackgroundColor3 = id == equipped and RGB(70, 90, 50) or RGB(40, 38, 34), Font = UI_FONT, TextSize = 11, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Bottom, TextColor3 = RGB(240, 235, 220), Text = Items.toolName(id), LayoutOrder = n, ZIndex = 27 }, invGrid)
+		corner(b, 8)
+		make("UIPadding", { PaddingBottom = UDim.new(0, 4) }, b)
+		local vp = itemIcon(id, b)
+		vp.Size = UDim2.fromOffset(56, 56)
+		vp.ZIndex = 28
+		b.Activated:Connect(function()
+			equip(id)
+			refreshHotbar()
+			renderInventory()
+		end)
+	end
+	-- ресурсы
+	local keys = {}
+	for k, def in pairs(Items.Resources) do
+		if (player:GetAttribute("Res_" .. k) or 0) > 0 then
+			table.insert(keys, { k = k, o = def.Order })
+		end
+	end
+	table.sort(keys, function(a, b)
+		return a.o < b.o
+	end)
+	for _, e in ipairs(keys) do
+		n += 1
+		local f = make("Frame", { BackgroundColor3 = RGB(34, 40, 34), LayoutOrder = n, ZIndex = 27 }, invGrid)
+		corner(f, 8)
+		make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 30, TextColor3 = RGB(255, 230, 140), Text = tostring(player:GetAttribute("Res_" .. e.k)), ZIndex = 28 }, f)
+		make("TextLabel", { Position = UDim2.fromOffset(4, 50), Size = UDim2.new(1, -8, 0, 40), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 11, TextWrapped = true, TextColor3 = RGB(220, 230, 210), Text = Items.Resources[e.k].Name, ZIndex = 28 }, f)
+	end
+end
+invButton("Убрать из рук", -95, RGB(70, 70, 76), function()
+	equip(nil)
+	refreshHotbar()
+	renderInventory()
+end)
+invButton("Закрыть", 95, RGB(90, 40, 30), function()
+	invPanel.Visible = false
+end)
+function openInventory()
+	if invPanel.Visible then
+		invPanel.Visible = false
+		return
+	end
+	renderInventory()
+	invPanel.Visible = true
+end
+
+-- СУНДУК: свой инвентарь, кладёшь и забираешь нужное количество
+local chestPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.48), Size = UDim2.fromOffset(560, 460), BackgroundColor3 = RGB(30, 24, 18), Visible = false, ZIndex = 26 }, gui)
+corner(chestPanel, 14)
+make("UIStroke", { Color = RGB(200, 160, 80), Thickness = 2 }, chestPanel)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, chestPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(255, 220, 150), Text = "СУНДУК", ZIndex = 27 }, chestPanel)
+make("TextLabel", { Position = UDim2.fromOffset(20, 44), Size = UDim2.fromOffset(120, 30), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextColor3 = RGB(230, 220, 200), Text = "Сколько:", ZIndex = 27 }, chestPanel)
+local chestAmount = make("TextBox", { Position = UDim2.fromOffset(130, 44), Size = UDim2.fromOffset(100, 30), BackgroundColor3 = RGB(50, 44, 38), Font = Enum.Font.GothamBlack, TextSize = 18, TextColor3 = RGB(255, 255, 255), Text = "10", ClearTextOnFocus = false, ZIndex = 27 }, chestPanel)
+corner(chestAmount, 6)
+make("TextLabel", { Position = UDim2.fromOffset(240, 44), Size = UDim2.fromOffset(300, 30), BackgroundTransparency = 1, Font = TEXT_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 180, 160), Text = "(у тебя | в сундуке)", ZIndex = 27 }, chestPanel)
+local chestList = make("ScrollingFrame", { Position = UDim2.fromOffset(14, 82), Size = UDim2.new(1, -28, 1, -140), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 27 }, chestPanel)
+make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, chestList)
+local chestClose = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.fromOffset(160, 40), BackgroundColor3 = RGB(90, 40, 30), Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = "Закрыть", ZIndex = 27 }, chestPanel)
+corner(chestClose, 8)
+local openChest
+chestClose.Activated:Connect(function()
+	chestPanel.Visible = false
+	openChest = nil
+end)
+local function renderChest()
+	for _, c in ipairs(chestList:GetChildren()) do
+		if c:IsA("Frame") then
+			c:Destroy()
+		end
+	end
+	if not openChest then
+		return
+	end
+	for k, def in pairs(Items.Resources) do
+		local mine = player:GetAttribute("Res_" .. k) or 0
+		local inside = openChest:GetAttribute("S_" .. k) or 0
+		if k ~= "key" and (mine > 0 or inside > 0) then
+			local r = make("Frame", { Size = UDim2.new(1, -8, 0, 38), BackgroundColor3 = RGB(46, 38, 30), LayoutOrder = def.Order, ZIndex = 27 }, chestList)
+			corner(r, 6)
+			make("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -240, 1, 0), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(240, 230, 210), Text = def.Name .. "   " .. mine .. " | " .. inside, ZIndex = 28 }, r)
+			for i, info in ipairs({ { "Положить", "put", RGB(60, 120, 70) }, { "Забрать", "take", RGB(60, 90, 140) } }) do
+				local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8 - (2 - i) * 112, 0.5, 0), Size = UDim2.fromOffset(106, 30), BackgroundColor3 = info[3], Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = info[1], ZIndex = 28 }, r)
+				corner(b, 6)
+				b.Activated:Connect(function()
+					remote("ChestMove"):FireServer(openChest, k, tonumber(chestAmount.Text) or 1, info[2])
+					task.delay(0.3, renderChest)
+				end)
+			end
+		end
+	end
+end
+remote("ChestOpen").OnClientEvent:Connect(function(chest)
+	openChest = chest
+	renderChest()
+	chestPanel.Visible = true
+end)
+
+-- баннер АДМИН-АБЬЮЗА
+local abuseBanner = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 70), Size = UDim2.fromOffset(700, 64), BackgroundColor3 = RGB(140, 20, 20), BackgroundTransparency = 0.15, Font = Enum.Font.FredokaOne, TextSize = 24, TextWrapped = true, TextColor3 = RGB(255, 240, 200), TextStrokeTransparency = 0.3, Visible = false, ZIndex = 35 }, gui)
+corner(abuseBanner, 12)
+RunService.RenderStepped:Connect(function()
+	local left = (workspace:GetAttribute("AbuseUntil") or 0) - workspace:GetServerTimeNow()
+	abuseBanner.Visible = left > 0 and not cutscene
+	if abuseBanner.Visible then
+		abuseBanner.Text = "🔥 АДМИН-АБЬЮЗ 🔥  " .. (workspace:GetAttribute("AbuseMsg") or "") .. "\nещё " .. math.ceil(left) .. " с"
+		abuseBanner.BackgroundColor3 = (math.floor(os.clock() * 2) % 2 == 0) and RGB(150, 20, 20) or RGB(110, 20, 60)
+	end
+end)
+
 -- сон и укрытие в лианах
 local restPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(0, 0, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 5 }, gui)
 local restText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.75), Size = UDim2.new(0.8, 0, 0, 60), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 22, TextColor3 = RGB(230, 235, 220), TextStrokeTransparency = 0.4, Text = "", ZIndex = 5 }, restPanel)
@@ -2022,9 +2197,13 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 		end
 		local cls = player:GetAttribute("Class")
-		local sprint = Config.SprintSpeed * (cls == "runner" and 1.3 or 1)
+		local lvl = player:GetAttribute("ClassLevel") or 1
+		local sprint = Config.SprintSpeed * (cls == "runner" and ({ 1.3, 1.45, 1.6 })[lvl] or 1)
+		wasSprinting = sprinting
 		if downed then
 			hum.WalkSpeed = 0
+		elseif os.clock() < slideUntil then
+			hum.WalkSpeed = 44 -- подкат
 		elseif crouched then
 			hum.WalkSpeed = Config.CrouchSpeed
 		else
@@ -2073,7 +2252,7 @@ RunService.RenderStepped:Connect(function(dt)
 				local kind = nodeModel and nodeModel:GetAttribute("Node")
 				if kind and not nodeModel:GetAttribute("Depleted") then
 					local nd = Items.Nodes[kind]
-					local okTool = def.Kind == nd.Tool and def.Tier >= nd.Tier
+					local okTool = (def.Kind == nd.Tool and def.Tier >= nd.Tier) or (def.Kind == "fists" and nd.Tier <= 1)
 					color = okTool and RGB(255, 210, 90) or RGB(160, 160, 160)
 					local need = nd.Tool == "axe" and "топор" or ("кирка ур. " .. nd.Tier)
 					targetLabel.Text = nd.Name .. (okTool and "" or ("  ·  нужен(а) " .. need))
@@ -2514,6 +2693,27 @@ if Config.DevTools then
 	btn("💰 Денежный дождь", function()
 		remote("Dev"):FireServer("money")
 	end, 2, RGB(120, 100, 20))
+	local abusePanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(460, 220), BackgroundColor3 = RGB(30, 14, 14), Visible = false, ZIndex = 40 }, gui)
+	corner(abusePanel, 14)
+	make("UIStroke", { Color = RGB(255, 90, 60), Thickness = 2 }, abusePanel)
+	make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, abusePanel)
+	make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 22, TextColor3 = RGB(255, 200, 160), Text = "АДМИН-АБЬЮЗ на всех серверах", ZIndex = 41 }, abusePanel)
+	local abuseText = make("TextBox", { Position = UDim2.fromOffset(20, 52), Size = UDim2.fromOffset(420, 60), BackgroundColor3 = RGB(50, 30, 30), Font = UI_FONT, TextSize = 16, TextWrapped = true, TextColor3 = RGB(255, 255, 255), PlaceholderText = "Твоё сообщение всем игрокам", Text = "Привет всем! Добро пожаловать на админ-абьюз!", ClearTextOnFocus = false, ZIndex = 41 }, abusePanel)
+	corner(abuseText, 8)
+	local goA = make("TextButton", { Position = UDim2.fromOffset(20, 130), Size = UDim2.fromOffset(250, 50), BackgroundColor3 = RGB(190, 50, 30), Font = Enum.Font.GothamBlack, TextSize = 18, TextColor3 = RGB(255, 255, 255), Text = "🔥 ЗАПУСТИТЬ", ZIndex = 41 }, abusePanel)
+	corner(goA, 10)
+	goA.Activated:Connect(function()
+		remote("Abuse"):FireServer(abuseText.Text)
+		abusePanel.Visible = false
+	end)
+	local noA = make("TextButton", { Position = UDim2.fromOffset(290, 130), Size = UDim2.fromOffset(150, 50), BackgroundColor3 = RGB(70, 70, 76), Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = "Отмена", ZIndex = 41 }, abusePanel)
+	corner(noA, 10)
+	noA.Activated:Connect(function()
+		abusePanel.Visible = false
+	end)
+	btn("🔥 АДМИН-АБЬЮЗ", function()
+		abusePanel.Visible = true
+	end, 2, RGB(170, 30, 30))
 	refreshAdmin()
 	UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or not player:GetAttribute("Admin") then
@@ -2574,7 +2774,7 @@ local keysHint = make("TextLabel", {
 	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Right,
 	TextColor3 = RGB(200, 195, 180),
-	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню · Tab — карта",
+	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню / забрать · Q — инвентарь · Tab — карта",
 }, gui)
 
 ------------------------------------------------------------------
@@ -2679,6 +2879,8 @@ if UserInputService.TouchEnabled then
 			BuildMode.rotate()
 		elseif kind == "torch" then
 			torchPlace = not torchPlace
+		else
+			tryPickup()
 		end
 	end)
 	tbtn("КАРТА", UDim2.fromOffset(150, 95), UDim2.fromOffset(60, 60), RGB(60, 130, 90), function()
@@ -2689,13 +2891,17 @@ if UserInputService.TouchEnabled then
 	tbtn("ЕДА", UDim2.fromOffset(225, 85), UDim2.fromOffset(60, 60), RGB(170, 50, 80), function()
 		remote("Eat"):FireServer()
 	end)
-	tbtn("УБРАТЬ", UDim2.fromOffset(70, 120), UDim2.fromOffset(60, 60), RGB(70, 70, 76), function()
-		equip(nil)
-		refreshHotbar()
+	tbtn("ИНВЕНТ", UDim2.fromOffset(70, 120), UDim2.fromOffset(60, 60), RGB(70, 70, 76), function()
+		if inMatch() and not cutscene then
+			openInventory()
+		end
 	end)
 	RunService.RenderStepped:Connect(function()
 		local t = touchMode()
 		pad.Visible = t and inMatch() and not cutscene
 		keysHint.Visible = not t
+	if player:GetAttribute("Device") == "gamepad" then
+		keysHint.Text = "R2 — удар · X — действие · Y — крафт · B — присесть · L1/R1 — предмет · Select — инвентарь · ↑ — карта · ← — еда · ↓ — меню / забрать · L3 — бег"
+	end
 	end)
 end

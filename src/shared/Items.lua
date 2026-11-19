@@ -53,6 +53,8 @@ Items.Recipes = {
 	{ Id = "deploy_workbench", Name = "Верстак", Cost = { wood = 12, stone = 4 } },
 	{ Id = "bandage", Name = "Бинт", Cost = { fiber = 3 }, Res = "bandage" },
 	{ Id = "torch", Cost = { wood = 3, fiber = 1 } },
+	{ Id = "wood_axe", Cost = { wood = 4 } },
+	{ Id = "wood_pickaxe", Cost = { wood = 4 } },
 	{ Id = "planks", Name = "Доски ×4", Cost = { wood = 3 }, Res = "planks", Amount = 4 },
 	{ Id = "blueprint", Cost = { planks = 4 } },
 	{ Id = "hammer", Cost = { wood = 3, stone = 2 } },

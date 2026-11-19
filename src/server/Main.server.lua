@@ -34,7 +34,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
-	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank", "PlaceTorch", "SetDevice",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank", "PlaceTorch", "SetDevice", "Pickup", "ChestOpen", "ChestMove", "ClassUpgrade", "Abuse",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -102,6 +102,9 @@ local function syncProfile(p)
 	p:SetAttribute("Class", pr.class)
 	p:SetAttribute("OwnedClasses", HttpService:JSONEncode(pr.owned))
 	p:SetAttribute("Device", pr.device or "")
+	pr.lv = pr.lv or {}
+	p:SetAttribute("ClassLevel", math.clamp(tonumber(pr.lv[pr.class]) or 1, 1, 3))
+	p:SetAttribute("ClassLevels", HttpService:JSONEncode(pr.lv))
 end
 
 -- сохранение: несколько попыток; если профиль не загрузился — НЕ сохраняем,
@@ -111,7 +114,7 @@ local function saveProfile(p, wait)
 	if not pr or not profileStore or pr.loadFailed then
 		return
 	end
-	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class, device = pr.device })
+	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class, device = pr.device, lv = pr.lv })
 	local key = "u" .. p.UserId
 	local function run()
 		for attempt = 1, 3 do
@@ -134,7 +137,7 @@ local function saveProfile(p, wait)
 end
 
 local function loadProfile(p)
-	local pr = { coins = 0, owned = { "none" }, class = "none" }
+	local pr = { coins = 0, owned = { "none" }, class = "none", lv = {} }
 	if profileStore then
 		local loaded = false
 		for attempt = 1, 3 do
@@ -152,6 +155,7 @@ local function loadProfile(p)
 						pr.owned = typeof(data.owned) == "table" and data.owned or { "none" }
 						pr.class = typeof(data.class) == "string" and data.class or "none"
 						pr.device = typeof(data.device) == "string" and data.device or nil
+						pr.lv = typeof(data.lv) == "table" and data.lv or {}
 					end
 				end
 				break
@@ -232,6 +236,7 @@ local function notifySession(s, text)
 end
 
 local updateHeld
+local classLevel
 local followers
 local applyInvisible
 local putInJail
@@ -325,22 +330,38 @@ local function syncInventory(p)
 	p:SetAttribute("Equipped", st.equipped)
 end
 
+function classLevel(p)
+	local pr = profiles[p]
+	return pr and math.clamp(tonumber((pr.lv or {})[pr.class]) or 1, 1, 3) or 1
+end
+
 local function freshInventory(p)
 	local st = state[p]
-	st.res, st.tools, st.equipped, st.gotSupply = {}, { "wood_pickaxe", "wood_axe" }, nil, false
+	-- без класса — ничего; дерево и камень добываются руками
+	st.res, st.tools, st.equipped, st.gotSupply = {}, {}, nil, false
 	st.armor = nil
 	p:SetAttribute("Armor", 0)
 	local cls = profiles[p] and profiles[p].class or "none"
+	local lv = classLevel(p)
 	if cls == "lumber" then
-		table.insert(st.tools, "stone_axe")
+		table.insert(st.tools, lv >= 2 and "stone_axe" or "wood_axe")
 	elseif cls == "miner" then
-		table.insert(st.tools, "stone_pickaxe")
+		table.insert(st.tools, ({ "wood_pickaxe", "stone_pickaxe", "iron_pickaxe" })[lv])
 	elseif cls == "warrior" then
 		table.insert(st.tools, "spear")
+		if lv >= 3 then
+			table.insert(st.tools, "iron_sword")
+		end
 	elseif cls == "builder" then
 		table.insert(st.tools, "blueprint")
 		table.insert(st.tools, "hammer")
-		st.res.planks = 20
+		st.res.planks = ({ 20, 40, 60 })[lv]
+		if lv >= 2 then
+			table.insert(st.tools, "deploy_chest")
+		end
+		if lv >= 3 then
+			table.insert(st.tools, "deploy_workbench")
+		end
 	end
 	syncInventory(p)
 end
@@ -714,21 +735,27 @@ local function hitNode(p, model, def)
 	if not nd or model:GetAttribute("Depleted") then
 		return false
 	end
-	if def.Kind ~= nd.Tool then
-		notify(p, nd.Tool == "axe" and "Нужен топор" or "Нужна кирка")
+	local byHand = def.Kind == "fists" and nd.Tier <= 1
+	if def.Kind ~= nd.Tool and not byHand then
+		notify(p, nd.Tool == "axe" and "Нужен топор (или бей дерево руками)" or "Нужна кирка (камень можно бить руками)")
 		return false
 	end
-	if def.Tier < nd.Tier then
+	if not byHand and def.Tier < nd.Tier then
 		notify(p, "Слишком твёрдо! Нужна кирка " .. nd.Tier .. " уровня (крафт на верстаке)")
 		return false
 	end
 	local dmg = def.Damage
 	local gain = 1
 	local cls = classOf(p)
-	if cls == "miner" and nd.Tool == "pickaxe" then
+	local lvl = classLevel(p)
+	if cls == "miner" and nd.Tool == "pickaxe" and lvl >= 2 then
+		dmg *= lvl == 3 and 2 or 1.75
+	elseif cls == "miner" and nd.Tool == "pickaxe" then
 		dmg *= 1.5
 	end
-	if cls == "lumber" and nd.Tool == "axe" then
+	if cls == "lumber" and nd.Tool == "axe" and lvl >= 3 then
+		gain = 3
+	elseif cls == "lumber" and nd.Tool == "axe" then
 		gain = 2
 	end
 	local hp = (model:GetAttribute("HP") or nd.Health) - dmg
@@ -1035,42 +1062,114 @@ function connectBed(s, bed, pr)
 end
 
 function connectChest(s, chest, put, take)
-	local store = {}
-	local function label()
-		local n = 0
-		for _, v in pairs(store) do
-			n += v
-		end
-		put.ObjectText = n > 0 and ("Сундук (" .. n .. " шт.)") or "Сундук (пусто)"
-	end
+	-- у сундука свой инвентарь: содержимое — в атрибутах S_<ресурс>
+	take:Destroy()
+	put.ActionText = "Открыть"
+	put.ObjectText = "Сундук"
+	chest:SetAttribute("SessionChest", true)
+	CollectionService:AddTag(chest, "StorageChest")
 	put.Triggered:Connect(function(p)
 		local st = state[p]
-		if not st or st.session ~= s then
-			return
+		if st and st.session == s then
+			R.ChestOpen:FireClient(p, chest)
 		end
-		for k, n in pairs(st.res) do
-			if k ~= "key" and n > 0 then
-				store[k] = (store[k] or 0) + n
-				addRes(p, k, -n)
+	end)
+end
+
+R.ChestMove.OnServerEvent:Connect(function(p, chest, key, amount, dir)
+	local st = state[p]
+	local s = st and st.session
+	local hrp = hrpOf(p)
+	if not s or not hrp or typeof(chest) ~= "Instance" or not chest:IsDescendantOf(s.folder) or not chest:GetAttribute("SessionChest") then
+		return
+	end
+	if typeof(key) ~= "string" or not Items.Resources[key] or key == "key" or typeof(amount) ~= "number" then
+		return
+	end
+	if (chest:GetPivot().Position - hrp.Position).Magnitude > 16 then
+		return
+	end
+	amount = math.floor(amount)
+	if amount <= 0 then
+		return
+	end
+	local inChest = chest:GetAttribute("S_" .. key) or 0
+	if dir == "put" then
+		amount = math.min(amount, st.res[key] or 0)
+		addRes(p, key, -amount)
+		chest:SetAttribute("S_" .. key, inChest + amount)
+	elseif dir == "take" then
+		amount = math.min(amount, inChest)
+		addRes(p, key, amount)
+		chest:SetAttribute("S_" .. key, inChest - amount)
+	end
+end)
+
+-- R: забрать поставленное (факел, верстак, сундук, кровать) обратно в инвентарь
+R.Pickup.OnServerEvent:Connect(function(p, model)
+	local st = state[p]
+	local s = st and st.session
+	local hrp = hrpOf(p)
+	if not s or not hrp or st.downed or typeof(model) ~= "Instance" or not model:IsA("Model") or model.Parent ~= s.folder then
+		return
+	end
+	if (model:GetPivot().Position - hrp.Position).Magnitude > 18 then
+		return
+	end
+	local give = ({ PlacedTorch = "torch", Workbench = "deploy_workbench", StorageChest = "deploy_chest", Bed = "deploy_bed" })[model.Name]
+	if not give then
+		return
+	end
+	if model.Name == "StorageChest" then
+		for k in pairs(Items.Resources) do
+			local n = model:GetAttribute("S_" .. k) or 0
+			if n > 0 then
+				addRes(p, k, n)
 			end
 		end
-		label()
-		notify(p, "Ресурсы сложены в сундук")
-	end)
-	take.Triggered:Connect(function(p)
-		local st = state[p]
-		if not st or st.session ~= s then
-			return
+	elseif model.Name == "Workbench" then
+		for i, b in ipairs(s.benches) do
+			if b.model == model then
+				table.remove(s.benches, i)
+				break
+			end
 		end
-		for k, n in pairs(store) do
-			addRes(p, k, n)
+	elseif model.Name == "Bed" then
+		for _, q in ipairs(s.players) do
+			if state[q] and state[q].sleeping == model then
+				return
+			end
 		end
-		store = {}
-		label()
-		notify(p, "Ты забрал всё из сундука")
-	end)
-	local _ = chest
-end
+	end
+	model:Destroy()
+	table.insert(st.tools, give)
+	p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
+	notify(p, "Забрано в инвентарь: " .. Items.toolName(give))
+end)
+
+-- улучшить класс за монеты (3 стадии)
+R.ClassUpgrade.OnServerEvent:Connect(function(p, id)
+	local pr = profiles[p]
+	if not pr or typeof(id) ~= "string" or id == "none" or not table.find(pr.owned, id) then
+		return
+	end
+	pr.lv = pr.lv or {}
+	local cur = math.clamp(tonumber(pr.lv[id]) or 1, 1, 3)
+	local cost = Config.ClassUpgradeCost[cur + 1]
+	if not cost then
+		notify(p, "Класс уже на максимальной стадии")
+		return
+	end
+	if pr.coins < cost then
+		notify(p, "Нужно " .. cost .. " монет")
+		return
+	end
+	pr.coins -= cost
+	pr.lv[id] = cur + 1
+	syncProfile(p)
+	saveProfile(p)
+	notify(p, "Класс улучшен до стадии " .. (cur + 1) .. "! Действует со следующего захода в лабиринт.")
+end)
 
 local function unhide(p)
 	local st = state[p]
@@ -1241,6 +1340,18 @@ R.Upgrade.OnServerEvent:Connect(function(p, piece, tier)
 			addRes(p, k, math.floor(n / 2))
 		end
 		s.pieces[piece:GetAttribute("Key")] = nil
+		-- факелы на этой стене падают тебе в инвентарь
+		local pcf, psize = piece:GetBoundingBox()
+		for _, t in ipairs(s.folder:GetChildren()) do
+			if t.Name == "PlacedTorch" then
+				local lp = pcf:PointToObjectSpace(t:GetPivot().Position)
+				if math.abs(lp.X) < psize.X / 2 + 2 and math.abs(lp.Y) < psize.Y / 2 + 2 and math.abs(lp.Z) < psize.Z / 2 + 2 then
+					t:Destroy()
+					table.insert(st.tools, "torch")
+				end
+			end
+		end
+		p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
 		piece:Destroy()
 		notify(p, "Снесено (вернулась половина досок)")
 		return
@@ -2343,8 +2454,9 @@ local function onCharacter(p, char)
 	hum.RequiresNeck = false
 	hum.WalkSpeed = Config.WalkSpeed
 	if classOf(p) == "warrior" then
-		hum.MaxHealth = 140
-		hum.Health = 140
+		local hp = 100 + ({ 40, 70, 100 })[classLevel(p)]
+		hum.MaxHealth = hp
+		hum.Health = hp
 	end
 	-- смерть от чего-то другого (например, падение) = ранение
 	hum.HealthChanged:Connect(function(h)
@@ -2767,14 +2879,13 @@ local function tsunami(p)
 end
 
 -- денежный дождь: монеты падают на центр, кто подобрал — тому монеты по-настоящему
-local function moneyRain(p)
-	local center, list = prankTarget(p)
+local function rainAt(center, list, count)
 	prankAll(list, "coins", "💰 С неба падают монеты! Собирай у центра!")
 	local folder = Instance.new("Folder")
 	folder.Name = "MoneyRain"
 	folder.Parent = workspace
 	task.spawn(function()
-		for _ = 1, 45 do
+		for _ = 1, count or 45 do
 			local a, r = math.random() * math.pi * 2, 6 + math.random() * 30
 			local c = Instance.new("Part")
 			c.Name = "RainCoin"
@@ -2801,6 +2912,116 @@ local function moneyRain(p)
 		folder:Destroy()
 	end)
 end
+
+local function moneyRain(p)
+	local center, list = prankTarget(p)
+	rainAt(center, list)
+end
+
+------------------------------------------------------------------
+-- АДМИН-АБЬЮЗ: запускается сразу на всех серверах игры
+------------------------------------------------------------------
+local MessagingService = game:GetService("MessagingService")
+local TextService = game:GetService("TextService")
+local abuseRunning = false
+local function lobbyPlayers()
+	local list = {}
+	for _, q in ipairs(Players:GetPlayers()) do
+		if not sessionOf(q) then
+			table.insert(list, q)
+		end
+	end
+	return list
+end
+local function runAbuse(msg)
+	if abuseRunning then
+		return
+	end
+	abuseRunning = true
+	workspace:SetAttribute("AbuseMsg", msg)
+	workspace:SetAttribute("AbuseUntil", workspace:GetServerTimeNow() + 240)
+	-- всем, кто на сервере, — новый класс «Строитель» и 50 монет
+	for _, q in ipairs(Players:GetPlayers()) do
+		local pr = profiles[q]
+		if pr then
+			if not table.find(pr.owned, "builder") then
+				table.insert(pr.owned, "builder")
+			end
+			syncProfile(q)
+			addCoins(q, 50)
+			saveProfile(q)
+			R.Prank:FireClient(q, "rumble")
+			notify(q, "🔥 АДМИН-АБЬЮЗ! Тебе выдан класс «Строитель» и 50 монет!")
+		end
+	end
+	local L = World.LOBBY
+	-- денежные дожди в лобби
+	for k = 0, 3 do
+		task.delay(10 + k * 45, function()
+			rainAt(L + V(0, -60, 0), lobbyPlayers(), 40)
+		end)
+	end
+	-- Скрежетник вылезает из лифта и носится по лобби (урона не наносит, только отбрасывает)
+	task.delay(25, function()
+		for _, q in ipairs(Players:GetPlayers()) do
+			R.Prank:FireClient(q, "siren")
+		end
+		local ok, mon = pcall(function()
+			return Monster.new({
+				parent = workspace,
+				spawn = CFrame.new(L + V(0, 8, -36)),
+				patrol = { L + V(-40, 0, 0), L + V(40, 0, 0), L + V(0, 0, 18), L + V(-20, 0, -15), L + V(25, 0, 15) },
+				getPlayers = lobbyPlayers,
+				inSafeZone = function()
+					return false
+				end,
+				damage = function(q)
+					local hrp = hrpOf(q)
+					if hrp then
+						hrp.AssemblyLinearVelocity = V(math.random(-40, 40), 60, math.random(-40, 40))
+					end
+				end,
+				health = 1e6,
+				speed = 17,
+				dmg = 0,
+			})
+		end)
+		if ok and mon then
+			task.delay(60, function()
+				mon:Die(true)
+			end)
+		end
+	end)
+	task.delay(240, function()
+		abuseRunning = false
+		workspace:SetAttribute("AbuseUntil", 0)
+	end)
+end
+pcall(function()
+	MessagingService:SubscribeAsync("AdminAbuse", function(m)
+		local msg = typeof(m.Data) == "string" and m.Data or "АДМИН-АБЬЮЗ!"
+		runAbuse(msg)
+	end)
+end)
+R.Abuse.OnServerEvent:Connect(function(p, text)
+	if (p:GetAttribute("Admin") or 0) < 2 or abuseRunning then
+		return
+	end
+	local msg = "Добро пожаловать на АДМИН-АБЬЮЗ!"
+	if typeof(text) == "string" and #text > 0 then
+		local ok, res = pcall(function()
+			return TextService:FilterStringAsync(text:sub(1, 120), p.UserId):GetNonChatStringForBroadcastAsync()
+		end)
+		if ok and res then
+			msg = res
+		end
+	end
+	runAbuse(msg)
+	-- на всех остальных серверах
+	pcall(function()
+		MessagingService:PublishAsync("AdminAbuse", msg)
+	end)
+end)
 
 R.Dev.OnServerEvent:Connect(function(p, action, value)
 	local lvl = p:GetAttribute("Admin") or 0

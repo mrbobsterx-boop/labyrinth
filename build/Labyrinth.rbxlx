@@ -253,6 +253,17 @@ Config.CoinsPerDay = 10
 Config.CoinsEscape = 100
 
 -- Классы у торговца в лобби
+-- Улучшение классов за монеты: 3 стадии. Цена перехода на 2-ю и 3-ю стадию.
+Config.ClassUpgradeCost = { [2] = 300, [3] = 800 }
+-- что даёт каждая стадия (показывается в магазине)
+Config.ClassLevels = {
+	runner = { "Бег +30%", "Бег +45%, +выносливость", "Бег +60% и ПОДКАТ (Ctrl на бегу)" },
+	lumber = { "Деревянный топор, дерево ×2", "Каменный топор, дерево ×2", "Каменный топор, дерево ×3" },
+	miner = { "Деревянная кирка, руда +50%", "Каменная кирка, руда +75%", "Железная кирка, руда ×2" },
+	warrior = { "+40 здоровья, копьё", "+70 здоровья, копьё", "+100 здоровья, копьё и железный меч" },
+	builder = { "Чертёж, молоток, 20 досок", "+40 досок и сундук", "+60 досок, сундук и верстак" },
+}
+
 Config.Classes = {
 	-- Items — с чем класс появляется в лабиринте (картинки в магазине)
 	{ Id = "none", Name = "Без класса", Price = 0, Desc = "Обычный выживший.", Items = {} },
@@ -591,6 +602,8 @@ Items.Recipes = {
 	{ Id = "deploy_workbench", Name = "Верстак", Cost = { wood = 12, stone = 4 } },
 	{ Id = "bandage", Name = "Бинт", Cost = { fiber = 3 }, Res = "bandage" },
 	{ Id = "torch", Cost = { wood = 3, fiber = 1 } },
+	{ Id = "wood_axe", Cost = { wood = 4 } },
+	{ Id = "wood_pickaxe", Cost = { wood = 4 } },
 	{ Id = "planks", Name = "Доски ×4", Cost = { wood = 3 }, Res = "planks", Amount = 4 },
 	{ Id = "blueprint", Cost = { planks = 4 } },
 	{ Id = "hammer", Cost = { wood = 3, stone = 2 } },
@@ -1074,7 +1087,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
-	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank", "PlaceTorch", "SetDevice",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank", "PlaceTorch", "SetDevice", "Pickup", "ChestOpen", "ChestMove", "ClassUpgrade", "Abuse",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -1142,6 +1155,9 @@ local function syncProfile(p)
 	p:SetAttribute("Class", pr.class)
 	p:SetAttribute("OwnedClasses", HttpService:JSONEncode(pr.owned))
 	p:SetAttribute("Device", pr.device or "")
+	pr.lv = pr.lv or {}
+	p:SetAttribute("ClassLevel", math.clamp(tonumber(pr.lv[pr.class]) or 1, 1, 3))
+	p:SetAttribute("ClassLevels", HttpService:JSONEncode(pr.lv))
 end
 
 -- сохранение: несколько попыток; если профиль не загрузился — НЕ сохраняем,
@@ -1151,7 +1167,7 @@ local function saveProfile(p, wait)
 	if not pr or not profileStore or pr.loadFailed then
 		return
 	end
-	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class, device = pr.device })
+	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class, device = pr.device, lv = pr.lv })
 	local key = "u" .. p.UserId
 	local function run()
 		for attempt = 1, 3 do
@@ -1174,7 +1190,7 @@ local function saveProfile(p, wait)
 end
 
 local function loadProfile(p)
-	local pr = { coins = 0, owned = { "none" }, class = "none" }
+	local pr = { coins = 0, owned = { "none" }, class = "none", lv = {} }
 	if profileStore then
 		local loaded = false
 		for attempt = 1, 3 do
@@ -1192,6 +1208,7 @@ local function loadProfile(p)
 						pr.owned = typeof(data.owned) == "table" and data.owned or { "none" }
 						pr.class = typeof(data.class) == "string" and data.class or "none"
 						pr.device = typeof(data.device) == "string" and data.device or nil
+						pr.lv = typeof(data.lv) == "table" and data.lv or {}
 					end
 				end
 				break
@@ -1272,6 +1289,7 @@ local function notifySession(s, text)
 end
 
 local updateHeld
+local classLevel
 local followers
 local applyInvisible
 local putInJail
@@ -1365,22 +1383,38 @@ local function syncInventory(p)
 	p:SetAttribute("Equipped", st.equipped)
 end
 
+function classLevel(p)
+	local pr = profiles[p]
+	return pr and math.clamp(tonumber((pr.lv or {})[pr.class]) or 1, 1, 3) or 1
+end
+
 local function freshInventory(p)
 	local st = state[p]
-	st.res, st.tools, st.equipped, st.gotSupply = {}, { "wood_pickaxe", "wood_axe" }, nil, false
+	-- без класса — ничего; дерево и камень добываются руками
+	st.res, st.tools, st.equipped, st.gotSupply = {}, {}, nil, false
 	st.armor = nil
 	p:SetAttribute("Armor", 0)
 	local cls = profiles[p] and profiles[p].class or "none"
+	local lv = classLevel(p)
 	if cls == "lumber" then
-		table.insert(st.tools, "stone_axe")
+		table.insert(st.tools, lv >= 2 and "stone_axe" or "wood_axe")
 	elseif cls == "miner" then
-		table.insert(st.tools, "stone_pickaxe")
+		table.insert(st.tools, ({ "wood_pickaxe", "stone_pickaxe", "iron_pickaxe" })[lv])
 	elseif cls == "warrior" then
 		table.insert(st.tools, "spear")
+		if lv >= 3 then
+			table.insert(st.tools, "iron_sword")
+		end
 	elseif cls == "builder" then
 		table.insert(st.tools, "blueprint")
 		table.insert(st.tools, "hammer")
-		st.res.planks = 20
+		st.res.planks = ({ 20, 40, 60 })[lv]
+		if lv >= 2 then
+			table.insert(st.tools, "deploy_chest")
+		end
+		if lv >= 3 then
+			table.insert(st.tools, "deploy_workbench")
+		end
 	end
 	syncInventory(p)
 end
@@ -1754,21 +1788,27 @@ local function hitNode(p, model, def)
 	if not nd or model:GetAttribute("Depleted") then
 		return false
 	end
-	if def.Kind ~= nd.Tool then
-		notify(p, nd.Tool == "axe" and "Нужен топор" or "Нужна кирка")
+	local byHand = def.Kind == "fists" and nd.Tier <= 1
+	if def.Kind ~= nd.Tool and not byHand then
+		notify(p, nd.Tool == "axe" and "Нужен топор (или бей дерево руками)" or "Нужна кирка (камень можно бить руками)")
 		return false
 	end
-	if def.Tier < nd.Tier then
+	if not byHand and def.Tier < nd.Tier then
 		notify(p, "Слишком твёрдо! Нужна кирка " .. nd.Tier .. " уровня (крафт на верстаке)")
 		return false
 	end
 	local dmg = def.Damage
 	local gain = 1
 	local cls = classOf(p)
-	if cls == "miner" and nd.Tool == "pickaxe" then
+	local lvl = classLevel(p)
+	if cls == "miner" and nd.Tool == "pickaxe" and lvl >= 2 then
+		dmg *= lvl == 3 and 2 or 1.75
+	elseif cls == "miner" and nd.Tool == "pickaxe" then
 		dmg *= 1.5
 	end
-	if cls == "lumber" and nd.Tool == "axe" then
+	if cls == "lumber" and nd.Tool == "axe" and lvl >= 3 then
+		gain = 3
+	elseif cls == "lumber" and nd.Tool == "axe" then
 		gain = 2
 	end
 	local hp = (model:GetAttribute("HP") or nd.Health) - dmg
@@ -2075,42 +2115,114 @@ function connectBed(s, bed, pr)
 end
 
 function connectChest(s, chest, put, take)
-	local store = {}
-	local function label()
-		local n = 0
-		for _, v in pairs(store) do
-			n += v
-		end
-		put.ObjectText = n > 0 and ("Сундук (" .. n .. " шт.)") or "Сундук (пусто)"
-	end
+	-- у сундука свой инвентарь: содержимое — в атрибутах S_<ресурс>
+	take:Destroy()
+	put.ActionText = "Открыть"
+	put.ObjectText = "Сундук"
+	chest:SetAttribute("SessionChest", true)
+	CollectionService:AddTag(chest, "StorageChest")
 	put.Triggered:Connect(function(p)
 		local st = state[p]
-		if not st or st.session ~= s then
-			return
+		if st and st.session == s then
+			R.ChestOpen:FireClient(p, chest)
 		end
-		for k, n in pairs(st.res) do
-			if k ~= "key" and n > 0 then
-				store[k] = (store[k] or 0) + n
-				addRes(p, k, -n)
+	end)
+end
+
+R.ChestMove.OnServerEvent:Connect(function(p, chest, key, amount, dir)
+	local st = state[p]
+	local s = st and st.session
+	local hrp = hrpOf(p)
+	if not s or not hrp or typeof(chest) ~= "Instance" or not chest:IsDescendantOf(s.folder) or not chest:GetAttribute("SessionChest") then
+		return
+	end
+	if typeof(key) ~= "string" or not Items.Resources[key] or key == "key" or typeof(amount) ~= "number" then
+		return
+	end
+	if (chest:GetPivot().Position - hrp.Position).Magnitude > 16 then
+		return
+	end
+	amount = math.floor(amount)
+	if amount <= 0 then
+		return
+	end
+	local inChest = chest:GetAttribute("S_" .. key) or 0
+	if dir == "put" then
+		amount = math.min(amount, st.res[key] or 0)
+		addRes(p, key, -amount)
+		chest:SetAttribute("S_" .. key, inChest + amount)
+	elseif dir == "take" then
+		amount = math.min(amount, inChest)
+		addRes(p, key, amount)
+		chest:SetAttribute("S_" .. key, inChest - amount)
+	end
+end)
+
+-- R: забрать поставленное (факел, верстак, сундук, кровать) обратно в инвентарь
+R.Pickup.OnServerEvent:Connect(function(p, model)
+	local st = state[p]
+	local s = st and st.session
+	local hrp = hrpOf(p)
+	if not s or not hrp or st.downed or typeof(model) ~= "Instance" or not model:IsA("Model") or model.Parent ~= s.folder then
+		return
+	end
+	if (model:GetPivot().Position - hrp.Position).Magnitude > 18 then
+		return
+	end
+	local give = ({ PlacedTorch = "torch", Workbench = "deploy_workbench", StorageChest = "deploy_chest", Bed = "deploy_bed" })[model.Name]
+	if not give then
+		return
+	end
+	if model.Name == "StorageChest" then
+		for k in pairs(Items.Resources) do
+			local n = model:GetAttribute("S_" .. k) or 0
+			if n > 0 then
+				addRes(p, k, n)
 			end
 		end
-		label()
-		notify(p, "Ресурсы сложены в сундук")
-	end)
-	take.Triggered:Connect(function(p)
-		local st = state[p]
-		if not st or st.session ~= s then
-			return
+	elseif model.Name == "Workbench" then
+		for i, b in ipairs(s.benches) do
+			if b.model == model then
+				table.remove(s.benches, i)
+				break
+			end
 		end
-		for k, n in pairs(store) do
-			addRes(p, k, n)
+	elseif model.Name == "Bed" then
+		for _, q in ipairs(s.players) do
+			if state[q] and state[q].sleeping == model then
+				return
+			end
 		end
-		store = {}
-		label()
-		notify(p, "Ты забрал всё из сундука")
-	end)
-	local _ = chest
-end
+	end
+	model:Destroy()
+	table.insert(st.tools, give)
+	p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
+	notify(p, "Забрано в инвентарь: " .. Items.toolName(give))
+end)
+
+-- улучшить класс за монеты (3 стадии)
+R.ClassUpgrade.OnServerEvent:Connect(function(p, id)
+	local pr = profiles[p]
+	if not pr or typeof(id) ~= "string" or id == "none" or not table.find(pr.owned, id) then
+		return
+	end
+	pr.lv = pr.lv or {}
+	local cur = math.clamp(tonumber(pr.lv[id]) or 1, 1, 3)
+	local cost = Config.ClassUpgradeCost[cur + 1]
+	if not cost then
+		notify(p, "Класс уже на максимальной стадии")
+		return
+	end
+	if pr.coins < cost then
+		notify(p, "Нужно " .. cost .. " монет")
+		return
+	end
+	pr.coins -= cost
+	pr.lv[id] = cur + 1
+	syncProfile(p)
+	saveProfile(p)
+	notify(p, "Класс улучшен до стадии " .. (cur + 1) .. "! Действует со следующего захода в лабиринт.")
+end)
 
 local function unhide(p)
 	local st = state[p]
@@ -2281,6 +2393,18 @@ R.Upgrade.OnServerEvent:Connect(function(p, piece, tier)
 			addRes(p, k, math.floor(n / 2))
 		end
 		s.pieces[piece:GetAttribute("Key")] = nil
+		-- факелы на этой стене падают тебе в инвентарь
+		local pcf, psize = piece:GetBoundingBox()
+		for _, t in ipairs(s.folder:GetChildren()) do
+			if t.Name == "PlacedTorch" then
+				local lp = pcf:PointToObjectSpace(t:GetPivot().Position)
+				if math.abs(lp.X) < psize.X / 2 + 2 and math.abs(lp.Y) < psize.Y / 2 + 2 and math.abs(lp.Z) < psize.Z / 2 + 2 then
+					t:Destroy()
+					table.insert(st.tools, "torch")
+				end
+			end
+		end
+		p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
 		piece:Destroy()
 		notify(p, "Снесено (вернулась половина досок)")
 		return
@@ -3383,8 +3507,9 @@ local function onCharacter(p, char)
 	hum.RequiresNeck = false
 	hum.WalkSpeed = Config.WalkSpeed
 	if classOf(p) == "warrior" then
-		hum.MaxHealth = 140
-		hum.Health = 140
+		local hp = 100 + ({ 40, 70, 100 })[classLevel(p)]
+		hum.MaxHealth = hp
+		hum.Health = hp
 	end
 	-- смерть от чего-то другого (например, падение) = ранение
 	hum.HealthChanged:Connect(function(h)
@@ -3807,14 +3932,13 @@ local function tsunami(p)
 end
 
 -- денежный дождь: монеты падают на центр, кто подобрал — тому монеты по-настоящему
-local function moneyRain(p)
-	local center, list = prankTarget(p)
+local function rainAt(center, list, count)
 	prankAll(list, "coins", "💰 С неба падают монеты! Собирай у центра!")
 	local folder = Instance.new("Folder")
 	folder.Name = "MoneyRain"
 	folder.Parent = workspace
 	task.spawn(function()
-		for _ = 1, 45 do
+		for _ = 1, count or 45 do
 			local a, r = math.random() * math.pi * 2, 6 + math.random() * 30
 			local c = Instance.new("Part")
 			c.Name = "RainCoin"
@@ -3841,6 +3965,116 @@ local function moneyRain(p)
 		folder:Destroy()
 	end)
 end
+
+local function moneyRain(p)
+	local center, list = prankTarget(p)
+	rainAt(center, list)
+end
+
+------------------------------------------------------------------
+-- АДМИН-АБЬЮЗ: запускается сразу на всех серверах игры
+------------------------------------------------------------------
+local MessagingService = game:GetService("MessagingService")
+local TextService = game:GetService("TextService")
+local abuseRunning = false
+local function lobbyPlayers()
+	local list = {}
+	for _, q in ipairs(Players:GetPlayers()) do
+		if not sessionOf(q) then
+			table.insert(list, q)
+		end
+	end
+	return list
+end
+local function runAbuse(msg)
+	if abuseRunning then
+		return
+	end
+	abuseRunning = true
+	workspace:SetAttribute("AbuseMsg", msg)
+	workspace:SetAttribute("AbuseUntil", workspace:GetServerTimeNow() + 240)
+	-- всем, кто на сервере, — новый класс «Строитель» и 50 монет
+	for _, q in ipairs(Players:GetPlayers()) do
+		local pr = profiles[q]
+		if pr then
+			if not table.find(pr.owned, "builder") then
+				table.insert(pr.owned, "builder")
+			end
+			syncProfile(q)
+			addCoins(q, 50)
+			saveProfile(q)
+			R.Prank:FireClient(q, "rumble")
+			notify(q, "🔥 АДМИН-АБЬЮЗ! Тебе выдан класс «Строитель» и 50 монет!")
+		end
+	end
+	local L = World.LOBBY
+	-- денежные дожди в лобби
+	for k = 0, 3 do
+		task.delay(10 + k * 45, function()
+			rainAt(L + V(0, -60, 0), lobbyPlayers(), 40)
+		end)
+	end
+	-- Скрежетник вылезает из лифта и носится по лобби (урона не наносит, только отбрасывает)
+	task.delay(25, function()
+		for _, q in ipairs(Players:GetPlayers()) do
+			R.Prank:FireClient(q, "siren")
+		end
+		local ok, mon = pcall(function()
+			return Monster.new({
+				parent = workspace,
+				spawn = CFrame.new(L + V(0, 8, -36)),
+				patrol = { L + V(-40, 0, 0), L + V(40, 0, 0), L + V(0, 0, 18), L + V(-20, 0, -15), L + V(25, 0, 15) },
+				getPlayers = lobbyPlayers,
+				inSafeZone = function()
+					return false
+				end,
+				damage = function(q)
+					local hrp = hrpOf(q)
+					if hrp then
+						hrp.AssemblyLinearVelocity = V(math.random(-40, 40), 60, math.random(-40, 40))
+					end
+				end,
+				health = 1e6,
+				speed = 17,
+				dmg = 0,
+			})
+		end)
+		if ok and mon then
+			task.delay(60, function()
+				mon:Die(true)
+			end)
+		end
+	end)
+	task.delay(240, function()
+		abuseRunning = false
+		workspace:SetAttribute("AbuseUntil", 0)
+	end)
+end
+pcall(function()
+	MessagingService:SubscribeAsync("AdminAbuse", function(m)
+		local msg = typeof(m.Data) == "string" and m.Data or "АДМИН-АБЬЮЗ!"
+		runAbuse(msg)
+	end)
+end)
+R.Abuse.OnServerEvent:Connect(function(p, text)
+	if (p:GetAttribute("Admin") or 0) < 2 or abuseRunning then
+		return
+	end
+	local msg = "Добро пожаловать на АДМИН-АБЬЮЗ!"
+	if typeof(text) == "string" and #text > 0 then
+		local ok, res = pcall(function()
+			return TextService:FilterStringAsync(text:sub(1, 120), p.UserId):GetNonChatStringForBroadcastAsync()
+		end)
+		if ok and res then
+			msg = res
+		end
+	end
+	runAbuse(msg)
+	-- на всех остальных серверах
+	pcall(function()
+		MessagingService:PublishAsync("AdminAbuse", msg)
+	end)
+end)
 
 R.Dev.OnServerEvent:Connect(function(p, action, value)
 	local lvl = p:GetAttribute("Admin") or 0
@@ -4571,8 +4805,8 @@ local function node(parent, kind, pos, rng)
 			end
 		end
 	end
-	local p = prompt(main, def.Action, def.Name, 0.7, 11)
-	tag(p, "NodePrompt")
+	-- добывается ударами (ЛКМ), без «зажми E»
+	local _ = main
 	m.Parent = parent
 	tag(m, "Node")
 	return m
@@ -4744,8 +4978,8 @@ function World.BuildLobby()
 	bp("BoothFloor", CFrame.new(0, 0.2, 0), V(22, 0.4, 12), RGB(80, 60, 44), M.WoodPlanks)
 	bp("BoothGlow", CFrame.new(0, 0.05, -6.6), V(24, 0.1, 1.2), RGB(60, 255, 230), M.Neon, NOCOLLIDE)
 	for _, x in ipairs({ -10, -6, 6, 10 }) do
-		bp("BoothPost", CFrame.new(x, 7, -5), V(1.4, 14, 1.4), LOG, M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
-		bp("BoothPost", CFrame.new(x, 7, 5), V(1.4, 14, 1.4), LOG, M.Wood, { Shape = Enum.PartType.Cylinder, Orientation = V(0, 0, 90) })
+		bp("BoothPost", CFrame.new(x, 7, -5), V(1.4, 14, 1.4), LOG, M.Wood)
+		bp("BoothPost", CFrame.new(x, 7, 5), V(1.4, 14, 1.4), LOG, M.Wood)
 	end
 	bp("BoothBack", CFrame.new(0, 7, 5.6), V(22, 14, 0.6), PLANK, M.WoodPlanks)
 	bp("BoothRoof", CFrame.new(0, 14.4, 0) * CFrame.Angles(math.rad(-8), 0, 0), V(25, 0.8, 14), RGB(110, 70, 40), M.WoodPlanks)
@@ -4756,9 +4990,9 @@ function World.BuildLobby()
 	bp("RoofBeam", CFrame.new(0, 13.9, -7.1), V(25, 0.6, 0.6), TRIM, M.SmoothPlastic, NOCOLLIDE)
 	-- прилавок из бревна
 	local counter = bp("Counter", CFrame.new(0, 1.8, -3.8), V(18, 3.6, 2.2), PLANK, M.WoodPlanks)
-	bp("CounterLog", CFrame.new(0, 3.9, -3.8) * CFrame.Angles(0, math.pi / 2, 0), V(19, 1.6, 1.6), LOG, M.Wood, { Shape = Enum.PartType.Cylinder })
+	bp("CounterLog", CFrame.new(0, 3.9, -3.8), V(19, 1.6, 1.6), LOG, M.Wood, { Shape = Enum.PartType.Cylinder })
 	for _, x in ipairs({ -9.6, 9.6 }) do
-		bp("LogEnd", CFrame.new(x, 3.9, -3.8) * CFrame.Angles(0, math.pi / 2, 0), V(0.3, 1.7, 1.7), TRIM, M.Wood, { Shape = Enum.PartType.Cylinder, CanCollide = false })
+		bp("LogEnd", CFrame.new(x, 3.9, -3.8), V(0.3, 1.7, 1.7), TRIM, M.Wood, { Shape = Enum.PartType.Cylinder, CanCollide = false })
 	end
 	-- лампы-шары под крышей
 	for _, x in ipairs({ -9, -5, 5, 9 }) do
@@ -6590,6 +6824,8 @@ local toggleMap, updateMap, updatePings
 local lobbyBar, updateMusic, settingsPanel, adminPanel
 local spectating, spectateIndex = nil, 0
 local torchPlace = true
+local slideUntil, wasSprinting = 0, false
+local openInventory, tryPickup
 local flyPad
 local openGive, openMoney, openClass
 local musicOn = true
@@ -7131,6 +7367,20 @@ task.spawn(function()
 	end
 end)
 
+-- R: забрать факел / верстак / сундук / кровать, на которые смотришь
+local PICKABLE = { PlacedTorch = true, Workbench = true, StorageChest = true, Bed = true }
+function tryPickup()
+	local r = aimRay(12)
+	local m = r and r.Instance:FindFirstAncestorOfClass("Model")
+	while m and not PICKABLE[m.Name] do
+		m = m:FindFirstAncestorOfClass("Model")
+	end
+	if m then
+		remote("Pickup"):FireServer(m)
+		sound(Config.Sounds.Pickup, 0.5, 1)
+	end
+end
+
 local function doSwing()
 	if not inMatch() or cutscene or craft.Visible then
 		return
@@ -7188,6 +7438,12 @@ local sprintHeld = false
 local flyingNow = false
 local crouched = false
 local function setCrouch(on)
+	-- подкат: бегун 3-й стадии нажимает Ctrl на бегу
+	if on and wasSprinting and player:GetAttribute("Class") == "runner" and (player:GetAttribute("ClassLevel") or 1) >= 3 then
+		slideUntil = os.clock() + 0.7
+		sound(Config.Sounds.Swing, 0.7, 0.6)
+		shake(0.2)
+	end
 	crouched = on
 	remote("Crouch"):FireServer(on)
 	local char = player.Character
@@ -7216,6 +7472,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		elseif kind == "deploy" then
 			BuildMode.rotate()
 			sound(Config.Sounds.Click, 0.4, 1.2)
+		else
+			tryPickup()
 		end
 	elseif (input.KeyCode == Enum.KeyCode.Tab or input.KeyCode == Enum.KeyCode.DPadUp) and inMatch() and not cutscene then
 		toggleMap()
@@ -7238,9 +7496,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			equip(hb[i])
 			refreshHotbar()
 		end
-	elseif input.KeyCode == Enum.KeyCode.Q then
-		equip(nil)
-		refreshHotbar()
+	elseif (input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonSelect) and inMatch() and not cutscene then
+		openInventory()
 	else
 		local n = input.KeyCode.Value - Enum.KeyCode.One.Value + 1
 		local hb = hotbarList()
@@ -7983,10 +8240,10 @@ local function updateLiftPanel()
 end
 
 -- магазин классов
-local shopPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 560, 0, 470), BackgroundColor3 = RGB(26, 22, 18), Visible = false, ZIndex = 12 }, gui)
+local shopPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0, 640, 0, 520), BackgroundColor3 = RGB(26, 22, 18), Visible = false, ZIndex = 12 }, gui)
 corner(shopPanel, 12)
 make("TextLabel", { Position = UDim2.new(0, 16, 0, 10), Size = UDim2.new(1, -32, 0, 36), BackgroundTransparency = 1, Font = Enum.Font.GothamBlack, TextSize = 24, TextColor3 = RGB(255, 210, 90), Text = "ТОРГОВЕЦ КЛАССАМИ", ZIndex = 12 }, shopPanel)
-local shopList = make("Frame", { Position = UDim2.new(0, 14, 0, 54), Size = UDim2.new(1, -28, 1, -116), BackgroundTransparency = 1, ZIndex = 12 }, shopPanel)
+local shopList = make("ScrollingFrame", { Position = UDim2.new(0, 14, 0, 54), Size = UDim2.new(1, -28, 1, -116), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 12 }, shopPanel)
 make("UIListLayout", { Padding = UDim.new(0, 6) }, shopList)
 local shopClose = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.new(0, 160, 0, 40), BackgroundColor3 = RGB(90, 40, 30), Font = UI_FONT, TextSize = 18, TextColor3 = RGB(255, 240, 230), Text = "Закрыть", Modal = true, ZIndex = 12 }, shopPanel)
 corner(shopClose, 8)
@@ -8007,7 +8264,16 @@ local function renderShop()
 		if c.Hidden and not table.find(owned, c.Id) then
 			continue
 		end
-		local row = make("Frame", { Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = RGB(44, 38, 30), ZIndex = 12 }, shopList)
+		local row = make("Frame", { Size = UDim2.new(1, -8, 0, 84), BackgroundColor3 = RGB(44, 38, 30), ZIndex = 12 }, shopList)
+		local levels = {}
+		pcall(function()
+			levels = HttpService:JSONDecode(player:GetAttribute("ClassLevels") or "{}")
+		end)
+		local lv = math.clamp(tonumber(levels[c.Id]) or 1, 1, 3)
+		local stages = Config.ClassLevels[c.Id]
+		if stages then
+			make("TextLabel", { Position = UDim2.new(0, 10, 0, 54), Size = UDim2.new(1, -150, 0, 22), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(150, 220, 140), Text = "Стадия " .. lv .. "/3: " .. stages[lv], ZIndex = 12 }, row)
+		end
 		-- картинки того, с чем появляется класс
 		for k, item in ipairs(c.Items or {}) do
 			local vp = itemIcon(item, row)
@@ -8020,12 +8286,21 @@ local function renderShop()
 		make("TextLabel", { Position = UDim2.new(0, 10, 0, 28), Size = UDim2.new(1, -250, 0, 24), BackgroundTransparency = 1, Font = TEXT_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 180, 160), Text = c.Desc, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 12 }, row)
 		local has = table.find(owned, c.Id) ~= nil
 		local current = player:GetAttribute("Class") == c.Id
-		local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.new(0, 120, 0, 38), BackgroundColor3 = current and RGB(80, 80, 80) or (has and RGB(60, 90, 140) or RGB(60, 120, 60)), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(255, 255, 255), Text = current and "Выбран" or (has and "Выбрать" or "Купить"), ZIndex = 12 }, row)
+		local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 8), Size = UDim2.new(0, 120, 0, 38), BackgroundColor3 = current and RGB(80, 80, 80) or (has and RGB(60, 90, 140) or RGB(60, 120, 60)), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(255, 255, 255), Text = current and "Выбран" or (has and "Выбрать" or "Купить"), ZIndex = 12 }, row)
 		corner(b, 6)
 		b.MouseButton1Click:Connect(function()
 			remote("ShopBuy"):FireServer(c.Id)
 			task.delay(0.4, renderShop)
 		end)
+		local nextCost = Config.ClassUpgradeCost[lv + 1]
+		if has and stages and nextCost then
+			local u = make("TextButton", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -10, 1, -6), Size = UDim2.new(0, 120, 0, 24), BackgroundColor3 = RGB(150, 110, 30), Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = "⬆ Улучшить · " .. nextCost .. " 🪙", ZIndex = 12 }, row)
+			corner(u, 6)
+			u.MouseButton1Click:Connect(function()
+				remote("ClassUpgrade"):FireServer(c.Id)
+				task.delay(0.4, renderShop)
+			end)
+		end
 	end
 end
 remote("ShopOpen").OnClientEvent:Connect(function()
@@ -8234,6 +8509,140 @@ remote("Prank").OnClientEvent:Connect(function(kind)
 	end
 end)
 
+-- ИНВЕНТАРЬ (Q / кнопка ИНВЕНТ / Select на контроллере)
+local invPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.48), Size = UDim2.fromOffset(620, 440), BackgroundColor3 = RGB(24, 22, 20), Visible = false, ZIndex = 26 }, gui)
+corner(invPanel, 14)
+make("UIStroke", { Color = RGB(170, 140, 90), Thickness = 2 }, invPanel)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, invPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(245, 230, 190), Text = "ИНВЕНТАРЬ", ZIndex = 27 }, invPanel)
+local invGrid = make("ScrollingFrame", { Position = UDim2.fromOffset(14, 46), Size = UDim2.new(1, -28, 1, -110), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 27 }, invPanel)
+make("UIGridLayout", { CellSize = UDim2.fromOffset(110, 96), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }, invGrid)
+local function invButton(text, x, color, fn)
+	local b = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, x, 1, -12), Size = UDim2.fromOffset(170, 40), BackgroundColor3 = color, Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 27 }, invPanel)
+	corner(b, 8)
+	b.Activated:Connect(fn)
+end
+local function renderInventory()
+	for _, c in ipairs(invGrid:GetChildren()) do
+		if c:IsA("GuiObject") then
+			c:Destroy()
+		end
+	end
+	local n = 0
+	-- предметы: нажми — взять в руку
+	for _, id in ipairs(hotbarList()) do
+		n += 1
+		local b = make("TextButton", { BackgroundColor3 = id == equipped and RGB(70, 90, 50) or RGB(40, 38, 34), Font = UI_FONT, TextSize = 11, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Bottom, TextColor3 = RGB(240, 235, 220), Text = Items.toolName(id), LayoutOrder = n, ZIndex = 27 }, invGrid)
+		corner(b, 8)
+		make("UIPadding", { PaddingBottom = UDim.new(0, 4) }, b)
+		local vp = itemIcon(id, b)
+		vp.Size = UDim2.fromOffset(56, 56)
+		vp.ZIndex = 28
+		b.Activated:Connect(function()
+			equip(id)
+			refreshHotbar()
+			renderInventory()
+		end)
+	end
+	-- ресурсы
+	local keys = {}
+	for k, def in pairs(Items.Resources) do
+		if (player:GetAttribute("Res_" .. k) or 0) > 0 then
+			table.insert(keys, { k = k, o = def.Order })
+		end
+	end
+	table.sort(keys, function(a, b)
+		return a.o < b.o
+	end)
+	for _, e in ipairs(keys) do
+		n += 1
+		local f = make("Frame", { BackgroundColor3 = RGB(34, 40, 34), LayoutOrder = n, ZIndex = 27 }, invGrid)
+		corner(f, 8)
+		make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 30, TextColor3 = RGB(255, 230, 140), Text = tostring(player:GetAttribute("Res_" .. e.k)), ZIndex = 28 }, f)
+		make("TextLabel", { Position = UDim2.fromOffset(4, 50), Size = UDim2.new(1, -8, 0, 40), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 11, TextWrapped = true, TextColor3 = RGB(220, 230, 210), Text = Items.Resources[e.k].Name, ZIndex = 28 }, f)
+	end
+end
+invButton("Убрать из рук", -95, RGB(70, 70, 76), function()
+	equip(nil)
+	refreshHotbar()
+	renderInventory()
+end)
+invButton("Закрыть", 95, RGB(90, 40, 30), function()
+	invPanel.Visible = false
+end)
+function openInventory()
+	if invPanel.Visible then
+		invPanel.Visible = false
+		return
+	end
+	renderInventory()
+	invPanel.Visible = true
+end
+
+-- СУНДУК: свой инвентарь, кладёшь и забираешь нужное количество
+local chestPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.48), Size = UDim2.fromOffset(560, 460), BackgroundColor3 = RGB(30, 24, 18), Visible = false, ZIndex = 26 }, gui)
+corner(chestPanel, 14)
+make("UIStroke", { Color = RGB(200, 160, 80), Thickness = 2 }, chestPanel)
+make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, chestPanel)
+make("TextLabel", { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 24, TextColor3 = RGB(255, 220, 150), Text = "СУНДУК", ZIndex = 27 }, chestPanel)
+make("TextLabel", { Position = UDim2.fromOffset(20, 44), Size = UDim2.fromOffset(120, 30), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextColor3 = RGB(230, 220, 200), Text = "Сколько:", ZIndex = 27 }, chestPanel)
+local chestAmount = make("TextBox", { Position = UDim2.fromOffset(130, 44), Size = UDim2.fromOffset(100, 30), BackgroundColor3 = RGB(50, 44, 38), Font = Enum.Font.GothamBlack, TextSize = 18, TextColor3 = RGB(255, 255, 255), Text = "10", ClearTextOnFocus = false, ZIndex = 27 }, chestPanel)
+corner(chestAmount, 6)
+make("TextLabel", { Position = UDim2.fromOffset(240, 44), Size = UDim2.fromOffset(300, 30), BackgroundTransparency = 1, Font = TEXT_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 180, 160), Text = "(у тебя | в сундуке)", ZIndex = 27 }, chestPanel)
+local chestList = make("ScrollingFrame", { Position = UDim2.fromOffset(14, 82), Size = UDim2.new(1, -28, 1, -140), BackgroundTransparency = 1, ScrollBarThickness = 6, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 27 }, chestPanel)
+make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, chestList)
+local chestClose = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.fromOffset(160, 40), BackgroundColor3 = RGB(90, 40, 30), Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = "Закрыть", ZIndex = 27 }, chestPanel)
+corner(chestClose, 8)
+local openChest
+chestClose.Activated:Connect(function()
+	chestPanel.Visible = false
+	openChest = nil
+end)
+local function renderChest()
+	for _, c in ipairs(chestList:GetChildren()) do
+		if c:IsA("Frame") then
+			c:Destroy()
+		end
+	end
+	if not openChest then
+		return
+	end
+	for k, def in pairs(Items.Resources) do
+		local mine = player:GetAttribute("Res_" .. k) or 0
+		local inside = openChest:GetAttribute("S_" .. k) or 0
+		if k ~= "key" and (mine > 0 or inside > 0) then
+			local r = make("Frame", { Size = UDim2.new(1, -8, 0, 38), BackgroundColor3 = RGB(46, 38, 30), LayoutOrder = def.Order, ZIndex = 27 }, chestList)
+			corner(r, 6)
+			make("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -240, 1, 0), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(240, 230, 210), Text = def.Name .. "   " .. mine .. " | " .. inside, ZIndex = 28 }, r)
+			for i, info in ipairs({ { "Положить", "put", RGB(60, 120, 70) }, { "Забрать", "take", RGB(60, 90, 140) } }) do
+				local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8 - (2 - i) * 112, 0.5, 0), Size = UDim2.fromOffset(106, 30), BackgroundColor3 = info[3], Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = info[1], ZIndex = 28 }, r)
+				corner(b, 6)
+				b.Activated:Connect(function()
+					remote("ChestMove"):FireServer(openChest, k, tonumber(chestAmount.Text) or 1, info[2])
+					task.delay(0.3, renderChest)
+				end)
+			end
+		end
+	end
+end
+remote("ChestOpen").OnClientEvent:Connect(function(chest)
+	openChest = chest
+	renderChest()
+	chestPanel.Visible = true
+end)
+
+-- баннер АДМИН-АБЬЮЗА
+local abuseBanner = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 70), Size = UDim2.fromOffset(700, 64), BackgroundColor3 = RGB(140, 20, 20), BackgroundTransparency = 0.15, Font = Enum.Font.FredokaOne, TextSize = 24, TextWrapped = true, TextColor3 = RGB(255, 240, 200), TextStrokeTransparency = 0.3, Visible = false, ZIndex = 35 }, gui)
+corner(abuseBanner, 12)
+RunService.RenderStepped:Connect(function()
+	local left = (workspace:GetAttribute("AbuseUntil") or 0) - workspace:GetServerTimeNow()
+	abuseBanner.Visible = left > 0 and not cutscene
+	if abuseBanner.Visible then
+		abuseBanner.Text = "🔥 АДМИН-АБЬЮЗ 🔥  " .. (workspace:GetAttribute("AbuseMsg") or "") .. "\nещё " .. math.ceil(left) .. " с"
+		abuseBanner.BackgroundColor3 = (math.floor(os.clock() * 2) % 2 == 0) and RGB(150, 20, 20) or RGB(110, 20, 60)
+	end
+end)
+
 -- сон и укрытие в лианах
 local restPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(0, 0, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 5 }, gui)
 local restText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.75), Size = UDim2.new(0.8, 0, 0, 60), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 22, TextColor3 = RGB(230, 235, 220), TextStrokeTransparency = 0.4, Text = "", ZIndex = 5 }, restPanel)
@@ -8390,9 +8799,13 @@ RunService.RenderStepped:Connect(function(dt)
 			end
 		end
 		local cls = player:GetAttribute("Class")
-		local sprint = Config.SprintSpeed * (cls == "runner" and 1.3 or 1)
+		local lvl = player:GetAttribute("ClassLevel") or 1
+		local sprint = Config.SprintSpeed * (cls == "runner" and ({ 1.3, 1.45, 1.6 })[lvl] or 1)
+		wasSprinting = sprinting
 		if downed then
 			hum.WalkSpeed = 0
+		elseif os.clock() < slideUntil then
+			hum.WalkSpeed = 44 -- подкат
 		elseif crouched then
 			hum.WalkSpeed = Config.CrouchSpeed
 		else
@@ -8441,7 +8854,7 @@ RunService.RenderStepped:Connect(function(dt)
 				local kind = nodeModel and nodeModel:GetAttribute("Node")
 				if kind and not nodeModel:GetAttribute("Depleted") then
 					local nd = Items.Nodes[kind]
-					local okTool = def.Kind == nd.Tool and def.Tier >= nd.Tier
+					local okTool = (def.Kind == nd.Tool and def.Tier >= nd.Tier) or (def.Kind == "fists" and nd.Tier <= 1)
 					color = okTool and RGB(255, 210, 90) or RGB(160, 160, 160)
 					local need = nd.Tool == "axe" and "топор" or ("кирка ур. " .. nd.Tier)
 					targetLabel.Text = nd.Name .. (okTool and "" or ("  ·  нужен(а) " .. need))
@@ -8882,6 +9295,27 @@ if Config.DevTools then
 	btn("💰 Денежный дождь", function()
 		remote("Dev"):FireServer("money")
 	end, 2, RGB(120, 100, 20))
+	local abusePanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(460, 220), BackgroundColor3 = RGB(30, 14, 14), Visible = false, ZIndex = 40 }, gui)
+	corner(abusePanel, 14)
+	make("UIStroke", { Color = RGB(255, 90, 60), Thickness = 2 }, abusePanel)
+	make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, abusePanel)
+	make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 22, TextColor3 = RGB(255, 200, 160), Text = "АДМИН-АБЬЮЗ на всех серверах", ZIndex = 41 }, abusePanel)
+	local abuseText = make("TextBox", { Position = UDim2.fromOffset(20, 52), Size = UDim2.fromOffset(420, 60), BackgroundColor3 = RGB(50, 30, 30), Font = UI_FONT, TextSize = 16, TextWrapped = true, TextColor3 = RGB(255, 255, 255), PlaceholderText = "Твоё сообщение всем игрокам", Text = "Привет всем! Добро пожаловать на админ-абьюз!", ClearTextOnFocus = false, ZIndex = 41 }, abusePanel)
+	corner(abuseText, 8)
+	local goA = make("TextButton", { Position = UDim2.fromOffset(20, 130), Size = UDim2.fromOffset(250, 50), BackgroundColor3 = RGB(190, 50, 30), Font = Enum.Font.GothamBlack, TextSize = 18, TextColor3 = RGB(255, 255, 255), Text = "🔥 ЗАПУСТИТЬ", ZIndex = 41 }, abusePanel)
+	corner(goA, 10)
+	goA.Activated:Connect(function()
+		remote("Abuse"):FireServer(abuseText.Text)
+		abusePanel.Visible = false
+	end)
+	local noA = make("TextButton", { Position = UDim2.fromOffset(290, 130), Size = UDim2.fromOffset(150, 50), BackgroundColor3 = RGB(70, 70, 76), Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = "Отмена", ZIndex = 41 }, abusePanel)
+	corner(noA, 10)
+	noA.Activated:Connect(function()
+		abusePanel.Visible = false
+	end)
+	btn("🔥 АДМИН-АБЬЮЗ", function()
+		abusePanel.Visible = true
+	end, 2, RGB(170, 30, 30))
 	refreshAdmin()
 	UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or not player:GetAttribute("Admin") then
@@ -8942,7 +9376,7 @@ local keysHint = make("TextLabel", {
 	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Right,
 	TextColor3 = RGB(200, 195, 180),
-	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню · Tab — карта",
+	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню / забрать · Q — инвентарь · Tab — карта",
 }, gui)
 
 ------------------------------------------------------------------
@@ -9047,6 +9481,8 @@ if UserInputService.TouchEnabled then
 			BuildMode.rotate()
 		elseif kind == "torch" then
 			torchPlace = not torchPlace
+		else
+			tryPickup()
 		end
 	end)
 	tbtn("КАРТА", UDim2.fromOffset(150, 95), UDim2.fromOffset(60, 60), RGB(60, 130, 90), function()
@@ -9057,14 +9493,18 @@ if UserInputService.TouchEnabled then
 	tbtn("ЕДА", UDim2.fromOffset(225, 85), UDim2.fromOffset(60, 60), RGB(170, 50, 80), function()
 		remote("Eat"):FireServer()
 	end)
-	tbtn("УБРАТЬ", UDim2.fromOffset(70, 120), UDim2.fromOffset(60, 60), RGB(70, 70, 76), function()
-		equip(nil)
-		refreshHotbar()
+	tbtn("ИНВЕНТ", UDim2.fromOffset(70, 120), UDim2.fromOffset(60, 60), RGB(70, 70, 76), function()
+		if inMatch() and not cutscene then
+			openInventory()
+		end
 	end)
 	RunService.RenderStepped:Connect(function()
 		local t = touchMode()
 		pad.Visible = t and inMatch() and not cutscene
 		keysHint.Visible = not t
+	if player:GetAttribute("Device") == "gamepad" then
+		keysHint.Text = "R2 — удар · X — действие · Y — крафт · B — присесть · L1/R1 — предмет · Select — инвентарь · ↑ — карта · ← — еда · ↓ — меню / забрать · L3 — бег"
+	end
 	end)
 end
 ]]></string>
