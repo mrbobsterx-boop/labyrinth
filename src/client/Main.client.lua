@@ -546,6 +546,7 @@ local function aimRay(range)
 end
 
 ------------------------------------------------------------------
+do
 -- Карта лабиринта (Tab): её нужно найти. Меняется вместе со стенами.
 ------------------------------------------------------------------
 local mapPanel = make("Frame", {
@@ -764,6 +765,8 @@ task.spawn(function()
 		end
 	end
 end)
+
+end
 
 -- R: забрать факел / верстак / сундук / кровать, на которые смотришь
 local PICKABLE = { PlacedTorch = true, Workbench = true, StorageChest = true, Bed = true }
@@ -1723,6 +1726,7 @@ remote("Note").OnClientEvent:Connect(function(title, text)
 	sound(Config.Sounds.Click, 0.4, 0.7)
 end)
 
+do
 -- нижняя панель лобби: большие кнопки с картинками
 lobbyBar = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14), Size = UDim2.fromOffset(460, 120), BackgroundColor3 = RGB(20, 20, 24), BackgroundTransparency = 0.35 }, gui)
 corner(lobbyBar, 16)
@@ -1907,6 +1911,9 @@ remote("Prank").OnClientEvent:Connect(function(kind)
 	end
 end)
 
+end
+
+do
 -- ИНВЕНТАРЬ (Q / кнопка ИНВЕНТ / Select на контроллере)
 local invPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.48), Size = UDim2.fromOffset(620, 440), BackgroundColor3 = RGB(24, 22, 20), Visible = false, ZIndex = 26 }, gui)
 corner(invPanel, 14)
@@ -2041,6 +2048,7 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+end
 -- сон и укрытие в лианах
 local restPanel = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RGB(0, 0, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 5 }, gui)
 local restText = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.75), Size = UDim2.new(0.8, 0, 0, 60), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 22, TextColor3 = RGB(230, 235, 220), TextStrokeTransparency = 0.4, Text = "", ZIndex = 5 }, restPanel)
@@ -2270,6 +2278,8 @@ end)
 -- Тестовые кнопки
 ------------------------------------------------------------------
 if Config.DevTools then
+	-- отдельная функция: у неё свой лимит локальных переменных
+	(function()
 	-- рамка админки: заголовок (свернуть/развернуть) и прокручиваемый список кнопок
 	local holder = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 68), Size = UDim2.fromOffset(200, 34), BackgroundTransparency = 1 }, gui)
 	local head = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(120, 70, 20), BackgroundTransparency = 0.1, Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = RGB(255, 230, 180), Text = "АДМИН-ПАНЕЛЬ ▾" }, holder)
@@ -2724,8 +2734,10 @@ if Config.DevTools then
 			flyB.Text = flying and "Полёт: ВКЛ (N)" or "Полёт: ВЫКЛ (N)"
 		end
 	end)
+	end)()
 end
 
+do
 ------------------------------------------------------------------
 -- Для всех: M — освободить мышь; L — полный свет (код 444 или админка)
 ------------------------------------------------------------------
@@ -2798,6 +2810,7 @@ local function touchMode()
 	return UserInputService.TouchEnabled and (not UserInputService.KeyboardEnabled or UserInputService:GetLastInputType() == Enum.UserInputType.Touch)
 end
 
+do
 -- подсказка с факелом в руке
 local torchHint = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -100), Size = UDim2.fromOffset(520, 30), BackgroundColor3 = RGB(15, 18, 24), BackgroundTransparency = 0.35, Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = RGB(255, 220, 160), Visible = false, Text = "" }, gui)
 corner(torchHint, 8)
@@ -2814,6 +2827,7 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+end
 -- при первом входе: на чём ты играешь? (запоминается навсегда)
 task.delay(4, function()
 	if player:GetAttribute("Device") ~= "" then
@@ -2904,4 +2918,5 @@ if UserInputService.TouchEnabled then
 		keysHint.Text = "R2 — удар · X — действие · Y — крафт · B — присесть · L1/R1 — предмет · Select — инвентарь · ↑ — карта · ← — еда · ↓ — меню / забрать · L3 — бег"
 	end
 	end)
+end
 end
