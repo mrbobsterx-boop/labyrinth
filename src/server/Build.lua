@@ -93,7 +93,7 @@ local function decorate(model, tier)
 				end
 				if tier == 0 then
 					-- чертёж: голубые «линии разметки»
-					bit(base * CFrame.new(0, 0, 0), V(u - 0.4, 0.06, w + 0.08), RGB(110, 170, 230), Enum.Material.Neon)
+					bit(base * CFrame.new(0, 0, 0), V(u - 0.4, 0.06, w + 0.08), RGB(150, 120, 80), Enum.Material.Wood)
 				end
 			elseif tier == 2 then
 				-- каменная кладка: швы рядами, со сдвигом через ряд

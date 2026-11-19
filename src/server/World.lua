@@ -330,20 +330,11 @@ function World.BuildLobby()
 	st2.TextColor3 = RGB(255, 245, 225)
 	st2.Text = "Стань сильнее с новым классом"
 	st2.Parent = ss
-	-- декор: птичья клетка, ящики, бумаги, красный флаг
-	for k = 0, 7 do
-		local a = k / 8 * math.pi * 2
-		bp("CageBar", CFrame.new(5 + math.cos(a) * 1.5, 6.4, 2 + math.sin(a) * 1.5), V(0.15, 4.4, 0.15), RGB(150, 110, 60), M.Wood, NOCOLLIDE)
-	end
-	bp("CageTop", CFrame.new(5, 8.8, 2), V(3.4, 0.5, 3.4), RGB(150, 110, 60), M.Wood, { Shape = Enum.PartType.Ball, CanCollide = false })
-	bp("CageBase", CFrame.new(5, 4.2, 2), V(3.6, 0.3, 3.6), RGB(120, 84, 48), M.Wood)
-	bp("CageStand", CFrame.new(5, 2.1, 2), V(0.4, 4.2, 0.4), RGB(90, 60, 36), M.Wood)
+	-- декор: ящики и бумаги
 	bp("Crate", CFrame.new(-7, 1.2, 3), V(2.4, 2.4, 2.4), RGB(180, 150, 100), M.WoodPlanks)
 	bp("Crate", CFrame.new(-7.2, 3.3, 3.1) * CFrame.Angles(0, 0.4, 0), V(1.8, 1.8, 1.8), RGB(190, 160, 110), M.WoodPlanks)
 	bp("Paper", CFrame.new(-3, 4.75, -3.6) * CFrame.Angles(0, 0.3, 0), V(1.2, 0.05, 1.5), RGB(240, 230, 200), M.SmoothPlastic, NOCOLLIDE)
 	bp("Paper", CFrame.new(3.4, 4.75, -3.7) * CFrame.Angles(0, -0.5, 0), V(1.2, 0.05, 1.5), RGB(240, 230, 200), M.SmoothPlastic, NOCOLLIDE)
-	bp("BannerPole", CFrame.new(13.5, 8, -4), V(0.5, 16, 0.5), RGB(70, 50, 30), M.Wood)
-	bp("Banner", CFrame.new(13.5, 11, -2.2), V(0.2, 7, 3.4), RGB(200, 50, 45), M.Fabric, NOCOLLIDE)
 	local _, npcTorso = classicNPC(m, base * CFrame.new(0, 0.4, 1), "Торговец классами")
 	local mp = prompt(counter, "Классы", "Торговец", 0, 14)
 	local _ = npcTorso

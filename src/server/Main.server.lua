@@ -34,7 +34,7 @@ local R = {}
 for _, name in ipairs({
 	"Swing", "Equip", "Craft", "Eat", "OpenCraft", "Notify", "PlayElevator", "Arrive", "Hurt", "HitMarker",
 	"Outro", "Dev", "Crouch", "Note", "LiftSettings", "ShopOpen", "ShopBuy", "ShopSelect", "Build",
-	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank",
+	"ExitIntro", "CardInsert", "MapData", "MazeShift", "Ping", "Upgrade", "Place", "Admin", "Prank", "PlaceTorch", "SetDevice",
 }) do
 	local r = remotes:FindFirstChild(name) or Instance.new("RemoteEvent")
 	r.Name = name
@@ -101,6 +101,7 @@ local function syncProfile(p)
 	p:SetAttribute("Coins", pr.coins)
 	p:SetAttribute("Class", pr.class)
 	p:SetAttribute("OwnedClasses", HttpService:JSONEncode(pr.owned))
+	p:SetAttribute("Device", pr.device or "")
 end
 
 -- сохранение: несколько попыток; если профиль не загрузился — НЕ сохраняем,
@@ -110,7 +111,7 @@ local function saveProfile(p, wait)
 	if not pr or not profileStore or pr.loadFailed then
 		return
 	end
-	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class })
+	local data = HttpService:JSONEncode({ coins = pr.coins, owned = pr.owned, class = pr.class, device = pr.device })
 	local key = "u" .. p.UserId
 	local function run()
 		for attempt = 1, 3 do
@@ -150,6 +151,7 @@ local function loadProfile(p)
 						pr.coins = tonumber(data.coins) or 0
 						pr.owned = typeof(data.owned) == "table" and data.owned or { "none" }
 						pr.class = typeof(data.class) == "string" and data.class or "none"
+						pr.device = typeof(data.device) == "string" and data.device or nil
 					end
 				end
 				break
@@ -230,6 +232,7 @@ local function notifySession(s, text)
 end
 
 local updateHeld
+local followers
 local applyInvisible
 local putInJail
 local function addRes(p, k, n)
@@ -334,6 +337,10 @@ local function freshInventory(p)
 		table.insert(st.tools, "stone_pickaxe")
 	elseif cls == "warrior" then
 		table.insert(st.tools, "spear")
+	elseif cls == "builder" then
+		table.insert(st.tools, "blueprint")
+		table.insert(st.tools, "hammer")
+		st.res.planks = 20
 	end
 	syncInventory(p)
 end
@@ -1361,6 +1368,8 @@ R.Craft.OnServerEvent:Connect(function(p, id)
 		bench.model:SetAttribute("Level", 2)
 		bench.label.Text = "Верстак · ур. 2"
 		notifySession(s, p.DisplayName .. " улучшил верстак до 2 уровня!")
+		-- сразу открыть новые рецепты
+		R.OpenCraft:FireClient(p, 2)
 	elseif r.Armor then
 		giveArmor(p, r.Armor)
 	elseif r.Res then
@@ -1394,6 +1403,8 @@ end)
 ------------------------------------------------------------------
 local function moveGates(s, close, duration)
 	s.gatesClosed = close
+	s.gateToken = (s.gateToken or 0) + 1
+	local token = s.gateToken
 	for _, g in ipairs(s.gates) do
 		for _, leaf in ipairs(g.leaves) do
 			local from = leaf.part.CFrame
@@ -1406,7 +1417,7 @@ local function moveGates(s, close, duration)
 			end
 			task.spawn(function()
 				local t0 = os.clock()
-				while leaf.part.Parent do
+				while leaf.part.Parent and s.gateToken == token do
 					local a = math.clamp((os.clock() - t0) / duration, 0, 1)
 					local e = a * a * (3 - 2 * a)
 					local cf = from:Lerp(to, e)
@@ -2221,6 +2232,9 @@ R.ShopBuy.OnServerEvent:Connect(function(p, id)
 	end
 	if table.find(pr.owned, id) then
 		pr.class = id
+	elseif c.Hidden then
+		notify(p, "Этот класс выдаёт только админ")
+		return
 	elseif pr.coins >= c.Price then
 		pr.coins -= c.Price
 		table.insert(pr.owned, id)
@@ -2395,6 +2409,94 @@ end)
 ------------------------------------------------------------------
 -- Тестовые кнопки
 ------------------------------------------------------------------
+-- «Следовать за мной»: каждые 0.1 c ставим игрока за спиной админа
+followers = {}
+task.spawn(function()
+	while true do
+		task.wait(0.1)
+		for target, admin in pairs(followers) do
+			local th, ah = hrpOf(target), hrpOf(admin)
+			if not target.Parent or not admin.Parent then
+				followers[target] = nil
+			elseif th and ah and (th.Position - ah.Position).Magnitude > 7 then
+				target.Character:PivotTo(ah.CFrame * CFrame.new(2.5, 0, 5))
+				th.AssemblyLinearVelocity = Vector3.zero
+			end
+		end
+	end
+end)
+
+-- поставить факел на землю или на стену (как в Minecraft)
+R.PlaceTorch.OnServerEvent:Connect(function(p, pos, normal)
+	local st = state[p]
+	local s = st and st.session
+	local _, char = hrpOf(p)
+	local head = char and char:FindFirstChild("Head")
+	if not s or not head or st.downed or st.equipped ~= "torch" or typeof(pos) ~= "Vector3" or typeof(normal) ~= "Vector3" then
+		return
+	end
+	if (head.Position - pos).Magnitude > 18 or normal.Magnitude < 0.5 then
+		return
+	end
+	normal = normal.Unit
+	local onGround = normal.Y > 0.6
+	local m = Instance.new("Model")
+	m.Name = "PlacedTorch"
+	local stick = Instance.new("Part")
+	stick.Anchored = true
+	stick.CanCollide = false
+	stick.Size = V(0.35, 2.2, 0.35)
+	stick.Color = Color3.fromRGB(110, 76, 46)
+	stick.Material = Enum.Material.Wood
+	if onGround then
+		stick.CFrame = CFrame.new(pos + V(0, 1.1, 0))
+	else
+		-- наклонён от стены
+		local flat = V(normal.X, 0, normal.Z).Unit
+		stick.CFrame = CFrame.lookAt(pos + flat * 0.2, pos + flat) * CFrame.Angles(-0.5, 0, 0) * CFrame.new(0, 0.9, 0)
+	end
+	stick.Parent = m
+	local flame = Instance.new("Part")
+	flame.Anchored = true
+	flame.CanCollide = false
+	flame.Size = V(0.5, 0.6, 0.5)
+	flame.Color = Color3.fromRGB(255, 150, 60)
+	flame.Material = Enum.Material.Neon
+	flame.CFrame = stick.CFrame * CFrame.new(0, 1.3, 0)
+	flame.Parent = m
+	local l = Instance.new("PointLight")
+	l.Range = 32
+	l.Brightness = 1.6
+	l.Color = Color3.fromRGB(255, 170, 90)
+	l.Shadows = true
+	l.Parent = flame
+	local f = Instance.new("Fire")
+	f.Size = 1.5
+	f.Heat = 3
+	f.Parent = flame
+	CollectionService:AddTag(l, "FlickerLight")
+	m.Parent = s.folder
+	-- факел израсходован
+	local i = table.find(st.tools, "torch")
+	if i then
+		table.remove(st.tools, i)
+	end
+	st.equipped = nil
+	p:SetAttribute("Equipped", nil)
+	p:SetAttribute("Tools", HttpService:JSONEncode(st.tools))
+	updateHeld(p)
+end)
+
+-- устройство игрока (спрашиваем один раз)
+R.SetDevice.OnServerEvent:Connect(function(p, d)
+	local pr = profiles[p]
+	if pr and (d == "pc" or d == "touch" or d == "gamepad") then
+		pr.device = d
+		syncProfile(p)
+		saveProfile(p)
+	end
+end)
+
 -- админ-панель: коды проверяются только на сервере
 -- одна админ-панель (полная), код 3535
 local ADMIN_CODES = { ["3535"] = 2 }
@@ -2770,6 +2872,59 @@ R.Dev.OnServerEvent:Connect(function(p, action, value)
 			return
 		end
 		notify(p, "Выдано игроку " .. target.DisplayName)
+	elseif (action == "givecoins" or action == "takecoins") and typeof(value) == "table" and typeof(value.uid) == "number" and typeof(value.amount) == "number" then
+		local target = Players:GetPlayerByUserId(value.uid)
+		local pr = target and profiles[target]
+		local n = math.clamp(math.floor(value.amount), 0, 1000000)
+		if pr and n > 0 then
+			if action == "givecoins" then
+				addCoins(target, n)
+				notify(target, "Админ подарил тебе " .. n .. " монет!")
+			else
+				pr.coins = math.max(0, pr.coins - n)
+				pr.dirty = true
+				syncProfile(target)
+				notify(target, "Админ забрал " .. n .. " монет")
+			end
+			notify(p, "Готово: " .. target.DisplayName .. " — " .. pr.coins .. " монет")
+		end
+	elseif (action == "giveclass" or action == "takeclass") and typeof(value) == "table" and typeof(value.uid) == "number" and typeof(value.class) == "string" then
+		local target = Players:GetPlayerByUserId(value.uid)
+		local pr = target and profiles[target]
+		local c = classById(value.class)
+		if pr and c and c.Id ~= "none" then
+			local i = table.find(pr.owned, c.Id)
+			if action == "giveclass" then
+				if not i then
+					table.insert(pr.owned, c.Id)
+				end
+				pr.class = c.Id
+				notify(target, "Админ выдал тебе класс «" .. c.Name .. "»!")
+			elseif i then
+				table.remove(pr.owned, i)
+				if pr.class == c.Id then
+					pr.class = "none"
+				end
+				notify(target, "Админ забрал класс «" .. c.Name .. "»")
+			end
+			pr.dirty = true
+			syncProfile(target)
+			saveProfile(target)
+			notify(p, "Класс «" .. c.Name .. "»: " .. (action == "giveclass" and "выдан " or "забран у ") .. target.DisplayName)
+		end
+	elseif action == "follow" and typeof(value) == "number" then
+		-- игрок идёт (и летит) следом за админом
+		local target = Players:GetPlayerByUserId(value)
+		if target and target ~= p then
+			if followers[target] == p then
+				followers[target] = nil
+				notify(p, target.DisplayName .. " больше не следует за тобой")
+			else
+				followers[target] = p
+				notify(p, target.DisplayName .. " теперь следует за тобой")
+				notify(target, "Админ ведёт тебя за собой")
+			end
+		end
 	elseif action == "kick" and typeof(value) == "number" then
 		-- выгнать с сервера (зайти снова можно)
 		local target = Players:GetPlayerByUserId(value)

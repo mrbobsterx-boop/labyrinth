@@ -221,7 +221,9 @@ Radial.init(gui)
 local toggleMap, updateMap, updatePings
 local lobbyBar, updateMusic, settingsPanel, adminPanel
 local spectating, spectateIndex = nil, 0
-local openGive
+local torchPlace = true
+local flyPad
+local openGive, openMoney, openClass
 local musicOn = true
 
 local function equip(id)
@@ -481,7 +483,7 @@ local function renderCraft()
 			TextSize = 13,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			TextColor3 = RGB(190, 180, 160),
-			Text = costText(r.Cost),
+			Text = (Items.Tools[r.Id] and Items.Tools[r.Id].Damage and Items.Tools[r.Id].Damage > 0 and ("⚔ урон " .. Items.Tools[r.Id].Damage .. (Items.Tools[r.Id].Tier > 0 and ("  ·  добыча ур. " .. Items.Tools[r.Id].Tier) or "") .. "     ") or "") .. costText(r.Cost),
 			ZIndex = 10,
 		}, row)
 		local b = make("TextButton", {
@@ -784,7 +786,18 @@ local function doSwing()
 		end
 		return
 	end
-	if def.Kind == "torch" or player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") or player:GetAttribute("Dragging") then
+	if def.Kind == "torch" then
+		-- ЛКМ — поставить факел на землю или стену (F — просто нести в руке)
+		if torchPlace and not player:GetAttribute("Downed") then
+			local r = aimRay(14)
+			if r then
+				remote("PlaceTorch"):FireServer(r.Position, r.Normal)
+				sound(Config.Sounds.Click, 0.6, 0.9)
+			end
+		end
+		return
+	end
+	if player:GetAttribute("Downed") or player:GetAttribute("Hidden") or player:GetAttribute("Sleeping") or player:GetAttribute("Dragging") then
 		return -- факелом не бьют: он только светит
 	end
 	if os.clock() - lastSwing < 0.42 then
@@ -824,7 +837,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.KeyCode == Enum.KeyCode.ButtonR2 then
 		doSwing()
-	elseif input.KeyCode == Enum.KeyCode.R and inMatch() and not cutscene then
+	elseif (input.KeyCode == Enum.KeyCode.R or input.KeyCode == Enum.KeyCode.DPadDown) and inMatch() and not cutscene then
 		local kind = equipped and Items.Tools[equipped] and Items.Tools[equipped].Kind
 		if player:GetAttribute("Downed") then
 			remote("Ping"):FireServer()
@@ -836,14 +849,27 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			BuildMode.rotate()
 			sound(Config.Sounds.Click, 0.4, 1.2)
 		end
-	elseif input.KeyCode == Enum.KeyCode.Tab and inMatch() and not cutscene then
+	elseif (input.KeyCode == Enum.KeyCode.Tab or input.KeyCode == Enum.KeyCode.DPadUp) and inMatch() and not cutscene then
 		toggleMap()
-	elseif input.KeyCode == Enum.KeyCode.H then
+	elseif input.KeyCode == Enum.KeyCode.H or input.KeyCode == Enum.KeyCode.DPadLeft then
 		remote("Eat"):FireServer()
-	elseif input.KeyCode == Enum.KeyCode.C and inMatch() and not cutscene then
+	elseif (input.KeyCode == Enum.KeyCode.C or input.KeyCode == Enum.KeyCode.ButtonY) and inMatch() and not cutscene then
 		openHandCraft()
-	elseif (input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl) and inMatch() and not cutscene and not flyingNow then
+	elseif (input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl or input.KeyCode == Enum.KeyCode.ButtonB) and inMatch() and not cutscene and not flyingNow then
 		setCrouch(not crouched)
+	elseif input.KeyCode == Enum.KeyCode.F and equipped == "torch" and inMatch() then
+		torchPlace = not torchPlace
+	-- контроллер (геймпад)
+	elseif input.KeyCode == Enum.KeyCode.ButtonL3 then
+		sprintHeld = not sprintHeld
+	elseif (input.KeyCode == Enum.KeyCode.ButtonL1 or input.KeyCode == Enum.KeyCode.ButtonR1) and inMatch() then
+		local hb = hotbarList()
+		if #hb > 0 then
+			local i = table.find(hb, equipped) or 0
+			i = (i + (input.KeyCode == Enum.KeyCode.ButtonR1 and 1 or -1) - 1) % #hb + 1
+			equip(hb[i])
+			refreshHotbar()
+		end
 	elseif input.KeyCode == Enum.KeyCode.Q then
 		equip(nil)
 		refreshHotbar()
@@ -1610,10 +1636,20 @@ local function renderShop()
 		owned = HttpService:JSONDecode(player:GetAttribute("OwnedClasses") or "[]")
 	end)
 	for _, c in ipairs(Config.Classes) do
+		if c.Hidden and not table.find(owned, c.Id) then
+			continue
+		end
 		local row = make("Frame", { Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = RGB(44, 38, 30), ZIndex = 12 }, shopList)
+		-- картинки того, с чем появляется класс
+		for k, item in ipairs(c.Items or {}) do
+			local vp = itemIcon(item, row)
+			vp.AnchorPoint = Vector2.new(1, 0.5)
+			vp.Position = UDim2.new(1, -136 - (k - 1) * 50, 0.5, 0)
+			vp.ZIndex = 13
+		end
 		corner(row, 8)
 		make("TextLabel", { Position = UDim2.new(0, 10, 0, 4), Size = UDim2.new(1, -150, 0, 24), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 17, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(245, 235, 210), Text = c.Name .. (c.Price > 0 and ("  ·  " .. c.Price .. " 🪙") or ""), ZIndex = 12 }, row)
-		make("TextLabel", { Position = UDim2.new(0, 10, 0, 28), Size = UDim2.new(1, -150, 0, 24), BackgroundTransparency = 1, Font = TEXT_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 180, 160), Text = c.Desc, ZIndex = 12 }, row)
+		make("TextLabel", { Position = UDim2.new(0, 10, 0, 28), Size = UDim2.new(1, -250, 0, 24), BackgroundTransparency = 1, Font = TEXT_FONT, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(190, 180, 160), Text = c.Desc, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 12 }, row)
 		local has = table.find(owned, c.Id) ~= nil
 		local current = player:GetAttribute("Class") == c.Id
 		local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.new(0, 120, 0, 38), BackgroundColor3 = current and RGB(80, 80, 80) or (has and RGB(60, 90, 140) or RGB(60, 120, 60)), Font = UI_FONT, TextSize = 15, TextColor3 = RGB(255, 255, 255), Text = current and "Выбран" or (has and "Выбрать" or "Купить"), ZIndex = 12 }, row)
@@ -2135,6 +2171,30 @@ if Config.DevTools then
 	end)
 	-- полёт (N)
 	local flying, flyConn = false, nil
+	local flyLV, flyAtt
+	local flyUp, flyDown = false, false
+	-- кнопки вверх/вниз для полёта на телефоне
+	flyPad = make("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -150, 1, -150), Size = UDim2.fromOffset(70, 150), BackgroundTransparency = 1, Visible = false, ZIndex = 20 }, gui)
+	local function holdBtn(text, y, setter)
+		local b = make("TextButton", { Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(70, 70), BackgroundColor3 = RGB(40, 60, 100), BackgroundTransparency = 0.2, Font = Enum.Font.GothamBlack, TextSize = 30, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 20 }, flyPad)
+		corner(b, 100)
+		b.InputBegan:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+				setter(true)
+			end
+		end)
+		b.InputEnded:Connect(function(i)
+			if i.UserInputType == Enum.UserInputType.Touch or i.UserInputType == Enum.UserInputType.MouseButton1 then
+				setter(false)
+			end
+		end)
+	end
+	holdBtn("▲", 0, function(v)
+		flyUp = v
+	end)
+	holdBtn("▼", 78, function(v)
+		flyDown = v
+	end)
 	local function setFly(on)
 		local char = player.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -2150,36 +2210,45 @@ if Config.DevTools then
 			flyConn:Disconnect()
 			flyConn = nil
 		end
+		if flyLV then
+			flyLV:Destroy()
+			flyLV = nil
+		end
+		if flyAtt then
+			flyAtt:Destroy()
+			flyAtt = nil
+		end
+		flyPad.Visible = on and UserInputService.TouchEnabled
 		if on then
-			flyConn = RunService.RenderStepped:Connect(function(dt)
+			-- скорость держит LinearVelocity: персонаж не сползает вниз
+			flyAtt = Instance.new("Attachment")
+			flyAtt.Parent = hrp
+			flyLV = Instance.new("LinearVelocity")
+			flyLV.Attachment0 = flyAtt
+			flyLV.MaxForce = math.huge
+			flyLV.RelativeTo = Enum.ActuatorRelativeTo.World
+			flyLV.VectorVelocity = Vector3.zero
+			flyLV.Parent = hrp
+			flyConn = RunService.RenderStepped:Connect(function()
+				if not hrp.Parent then
+					return
+				end
 				local cam = workspace.CurrentCamera
-				local mv = Vector3.zero
 				local K = Enum.KeyCode
-				if UserInputService:IsKeyDown(K.W) then
-					mv += cam.CFrame.LookVector
-				end
-				if UserInputService:IsKeyDown(K.S) then
-					mv -= cam.CFrame.LookVector
-				end
-				if UserInputService:IsKeyDown(K.D) then
-					mv += cam.CFrame.RightVector
-				end
-				if UserInputService:IsKeyDown(K.A) then
-					mv -= cam.CFrame.RightVector
-				end
-				if UserInputService:IsKeyDown(K.Space) then
+				-- WASD и джойстик телефона дают MoveDirection
+				local mv = hum.MoveDirection
+				if UserInputService:IsKeyDown(K.Space) or UserInputService:IsKeyDown(K.ButtonA) or flyUp then
 					mv += Vector3.yAxis
 				end
-				if UserInputService:IsKeyDown(K.LeftControl) then
+				if UserInputService:IsKeyDown(K.LeftControl) or UserInputService:IsKeyDown(K.ButtonB) or flyDown then
 					mv -= Vector3.yAxis
 				end
-				local pos = hrp.Position
-				if mv.Magnitude > 0 then
-					pos += mv.Unit * (UserInputService:IsKeyDown(K.LeftShift) and 140 or 55) * dt
-				end
+				local fast = UserInputService:IsKeyDown(K.LeftShift) or sprintHeld
+				flyLV.VectorVelocity = mv.Magnitude > 0.05 and mv.Unit * (fast and 140 or 55) or Vector3.zero
 				local flat = V(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
-				hrp.CFrame = CFrame.lookAt(pos, pos + (flat.Magnitude > 0.01 and flat or V(0, 0, -1)))
-				hrp.AssemblyLinearVelocity = Vector3.zero
+				if flat.Magnitude > 0.01 then
+					hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + flat)
+				end
 				for _, d in ipairs(char:GetDescendants()) do
 					if d:IsA("BasePart") then
 						d.CanCollide = false
@@ -2303,6 +2372,70 @@ if Config.DevTools then
 		end
 		givePanel.Visible = true
 	end
+	-- деньги: дать или забрать
+	local moneyPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(380, 230), BackgroundColor3 = RGB(26, 26, 30), Visible = false, ZIndex = 40 }, gui)
+	corner(moneyPanel, 14)
+	make("UIStroke", { Color = RGB(230, 190, 60), Thickness = 2 }, moneyPanel)
+	make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, moneyPanel)
+	local moneyTitle = make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 22, TextColor3 = RGB(255, 220, 120), Text = "", ZIndex = 41 }, moneyPanel)
+	local amountBox = make("TextBox", { Position = UDim2.fromOffset(60, 54), Size = UDim2.fromOffset(260, 46), BackgroundColor3 = RGB(40, 44, 50), Font = Enum.Font.GothamBlack, TextSize = 24, TextColor3 = RGB(255, 255, 255), PlaceholderText = "Сколько монет", Text = "100", ClearTextOnFocus = false, ZIndex = 41 }, moneyPanel)
+	corner(amountBox, 8)
+	local moneyTarget
+	local function mBtn(text, x, color, fn)
+		local b = make("TextButton", { Position = UDim2.fromOffset(x, 116), Size = UDim2.fromOffset(110, 44), BackgroundColor3 = color, Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 41 }, moneyPanel)
+		corner(b, 8)
+		b.Activated:Connect(fn)
+	end
+	mBtn("Дать", 20, RGB(60, 140, 80), function()
+		remote("Dev"):FireServer("givecoins", { uid = moneyTarget.UserId, amount = tonumber(amountBox.Text) or 0 })
+	end)
+	mBtn("Забрать", 135, RGB(160, 70, 40), function()
+		remote("Dev"):FireServer("takecoins", { uid = moneyTarget.UserId, amount = tonumber(amountBox.Text) or 0 })
+	end)
+	mBtn("Закрыть", 250, RGB(70, 70, 76), function()
+		moneyPanel.Visible = false
+	end)
+	function openMoney(q)
+		moneyTarget = q
+		moneyTitle.Text = "Монеты: " .. q.DisplayName .. " (" .. (q:GetAttribute("Coins") or 0) .. ")"
+		moneyPanel.Visible = true
+	end
+	-- класс: выдать или забрать (включая Строителя)
+	local classPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(460, 360), BackgroundColor3 = RGB(26, 26, 30), Visible = false, ZIndex = 40 }, gui)
+	corner(classPanel, 14)
+	make("UIStroke", { Color = RGB(160, 110, 230), Thickness = 2 }, classPanel)
+	make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, classPanel)
+	local classTitle = make("TextLabel", { Position = UDim2.fromOffset(0, 10), Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 22, TextColor3 = RGB(210, 180, 255), Text = "", ZIndex = 41 }, classPanel)
+	local classList = make("Frame", { Position = UDim2.fromOffset(14, 46), Size = UDim2.new(1, -28, 1, -110), BackgroundTransparency = 1, ZIndex = 41 }, classPanel)
+	make("UIListLayout", { Padding = UDim.new(0, 4) }, classList)
+	local cClose = make("TextButton", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -12), Size = UDim2.fromOffset(150, 40), BackgroundColor3 = RGB(70, 70, 76), Font = UI_FONT, TextSize = 16, TextColor3 = RGB(255, 255, 255), Text = "Закрыть", ZIndex = 41 }, classPanel)
+	corner(cClose, 8)
+	cClose.Activated:Connect(function()
+		classPanel.Visible = false
+	end)
+	function openClass(q)
+		classTitle.Text = "Класс: " .. q.DisplayName
+		for _, c in ipairs(classList:GetChildren()) do
+			if c:IsA("Frame") then
+				c:Destroy()
+			end
+		end
+		for _, c in ipairs(Config.Classes) do
+			if c.Id ~= "none" then
+				local r = make("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = RGB(40, 40, 46), ZIndex = 41 }, classList)
+				corner(r, 6)
+				make("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -230, 1, 0), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = RGB(240, 240, 235), Text = c.Name, ZIndex = 42 }, r)
+				for k, info in ipairs({ { "Выдать", "giveclass", RGB(60, 140, 80) }, { "Забрать", "takeclass", RGB(160, 70, 40) } }) do
+					local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8 - (2 - k) * 106, 0.5, 0), Size = UDim2.fromOffset(100, 30), BackgroundColor3 = info[3], Font = UI_FONT, TextSize = 14, TextColor3 = RGB(255, 255, 255), Text = info[1], ZIndex = 42 }, r)
+					corner(b, 6)
+					b.Activated:Connect(function()
+						remote("Dev"):FireServer(info[2], { uid = q.UserId, class = c.Id })
+					end)
+				end
+			end
+		end
+		classPanel.Visible = true
+	end
 	local function renderPlayers()
 		for _, c in ipairs(plList:GetChildren()) do
 			if c:IsA("Frame") then
@@ -2313,19 +2446,28 @@ if Config.DevTools then
 		for _, q in ipairs(Players:GetPlayers()) do
 			do
 				n += 1
-				local row = make("Frame", { Size = UDim2.new(1, -8, 0, 46), BackgroundColor3 = RGB(36, 38, 44), LayoutOrder = n, ZIndex = 31 }, plList)
+				local row = make("Frame", { Size = UDim2.new(1, -8, 0, q == player and 46 or 84), BackgroundColor3 = RGB(36, 38, 44), LayoutOrder = n, ZIndex = 31 }, plList)
 				corner(row, 8)
 				local jailed = q:GetAttribute("Jailed") == true
 				make("TextLabel", { Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0, 150, 1, 0), BackgroundTransparency = 1, Font = UI_FONT, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextColor3 = jailed and RGB(255, 120, 110) or RGB(240, 240, 235), Text = q.DisplayName .. (q == player and " (ты)" or "") .. (jailed and " (в тюрьме)" or ""), ZIndex = 32 }, row)
-				local x = 166
+				local x, y = 166, 7
 				local function act(text, color, fn)
-					local b = make("TextButton", { Position = UDim2.fromOffset(x, 7), Size = UDim2.fromOffset(88, 32), BackgroundColor3 = color, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 32 }, row)
+					if x > 166 + 94 * 4 then
+						x, y = 166, 45
+					end
+					local b = make("TextButton", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(88, 32), BackgroundColor3 = color, Font = UI_FONT, TextSize = 13, TextColor3 = RGB(255, 255, 255), Text = text, ZIndex = 32 }, row)
 					corner(b, 6)
 					b.Activated:Connect(fn)
 					x += 94
 				end
 				act("Выдать", RGB(130, 100, 30), function()
 					openGive(q)
+				end)
+				act("Монеты", RGB(150, 120, 20), function()
+					openMoney(q)
+				end)
+				act("Класс", RGB(90, 60, 130), function()
+					openClass(q)
 				end)
 				if q ~= player then
 					act("ТП к нему", RGB(40, 90, 140), function()
@@ -2342,6 +2484,9 @@ if Config.DevTools then
 					act(jailed and "Выпустить" or "В тюрьму", RGB(120, 30, 30), function()
 						remote("Dev"):FireServer("jail", q.UserId)
 						task.delay(0.6, renderPlayers)
+					end)
+					act("Веду/отпустить", RGB(30, 100, 110), function()
+						remote("Dev"):FireServer("follow", q.UserId)
 					end)
 				end
 			end
@@ -2444,8 +2589,50 @@ rescale()
 workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
 
 local function touchMode()
+	local d = player:GetAttribute("Device")
+	if d == "touch" then
+		return true
+	elseif d == "pc" or d == "gamepad" then
+		return false
+	end
 	return UserInputService.TouchEnabled and (not UserInputService.KeyboardEnabled or UserInputService:GetLastInputType() == Enum.UserInputType.Touch)
 end
+
+-- подсказка с факелом в руке
+local torchHint = make("TextLabel", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -100), Size = UDim2.fromOffset(520, 30), BackgroundColor3 = RGB(15, 18, 24), BackgroundTransparency = 0.35, Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = RGB(255, 220, 160), Visible = false, Text = "" }, gui)
+corner(torchHint, 8)
+RunService.RenderStepped:Connect(function()
+	torchHint.Visible = equipped == "torch" and inMatch() and not cutscene
+	if torchHint.Visible then
+		local t = touchMode()
+		local pad = player:GetAttribute("Device") == "gamepad"
+		if torchPlace then
+			torchHint.Text = (t and "УДАР" or pad and "R2" or "ЛКМ") .. " — поставить факел  ·  " .. (t and "МЕНЮ" or pad and "—" or "F") .. " — просто нести"
+		else
+			torchHint.Text = "Несёшь факел  ·  " .. (t and "МЕНЮ" or "F") .. " — снова ставить"
+		end
+	end
+end)
+
+-- при первом входе: на чём ты играешь? (запоминается навсегда)
+task.delay(4, function()
+	if player:GetAttribute("Device") ~= "" then
+		return
+	end
+	local panel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(560, 250), BackgroundColor3 = RGB(24, 26, 30), ZIndex = 50 }, gui)
+	corner(panel, 16)
+	make("UIStroke", { Color = RGB(200, 170, 90), Thickness = 2 }, panel)
+	make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, panel)
+	make("TextLabel", { Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Font = Enum.Font.FredokaOne, TextSize = 28, TextColor3 = RGB(255, 230, 170), Text = "На чём ты играешь?", ZIndex = 51 }, panel)
+	for k, d in ipairs({ { "pc", "💻", "Компьютер" }, { "touch", "📱", "Телефон / планшет" }, { "gamepad", "🎮", "Контроллер" } }) do
+		local b = make("TextButton", { Position = UDim2.fromOffset(24 + (k - 1) * 176, 70), Size = UDim2.fromOffset(160, 150), BackgroundColor3 = RGB(46, 52, 62), Font = Enum.Font.GothamBlack, TextSize = 18, TextWrapped = true, TextColor3 = RGB(255, 255, 255), Text = d[2] .. "\n\n" .. d[3], ZIndex = 51 }, panel)
+		corner(b, 12)
+		b.Activated:Connect(function()
+			remote("SetDevice"):FireServer(d[1])
+			panel:Destroy()
+		end)
+	end
+end)
 keysHint.Visible = not touchMode()
 if UserInputService.TouchEnabled then
 	local pad = make("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -24, 1, -190), Size = UDim2.fromOffset(250, 330), BackgroundTransparency = 1 }, gui)
@@ -2490,6 +2677,8 @@ if UserInputService.TouchEnabled then
 			BuildMode.hammerMenu(Radial, remote("Upgrade"))
 		elseif kind == "deploy" then
 			BuildMode.rotate()
+		elseif kind == "torch" then
+			torchPlace = not torchPlace
 		end
 	end)
 	tbtn("КАРТА", UDim2.fromOffset(150, 95), UDim2.fromOffset(60, 60), RGB(60, 130, 90), function()

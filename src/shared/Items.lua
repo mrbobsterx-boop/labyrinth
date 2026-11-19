@@ -63,7 +63,7 @@ Items.Recipes = {
 	{ Id = "spear", Station = "bench", Level = 1, Cost = { wood = 8, stone = 3, fiber = 2 } },
 	{ Id = "stone_sword", Station = "bench", Level = 1, Cost = { wood = 4, stone = 12 } },
 	{ Id = "upgrade2", Station = "bench", Level = 1, Name = "Улучшить верстак до 2 уровня", Cost = { wood = 20, stone = 20, iron = 6 } },
-	{ Id = "armor_leather", Name = "Кожаная броня (−20% урона)", Station = "bench", Level = 1, Cost = { fiber = 10, wood = 6, fang = 1 }, Armor = 1 },
+	{ Id = "armor_leather", Name = "Кожаная броня (−20% урона)", Station = "bench", Level = 1, Cost = { fiber = 4, wood = 4 }, Armor = 1 },
 	{ Id = "iron_pickaxe", Station = "bench", Level = 2, Cost = { wood = 6, iron = 10 } },
 	{ Id = "armor_iron", Name = "Железная броня (−40% урона)", Station = "bench", Level = 2, Cost = { iron = 14, fiber = 4 }, Armor = 2 },
 	{ Id = "armor_crystal", Name = "Кристальная броня (−55% урона)", Station = "bench", Level = 2, Cost = { crystal = 8, iron = 6, fang = 3 }, Armor = 3 },
