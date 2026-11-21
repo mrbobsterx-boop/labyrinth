@@ -258,7 +258,7 @@ Config.ClassUpgradeCost = { [2] = 300, [3] = 800 }
 -- что даёт каждая стадия (показывается в магазине)
 Config.ClassLevels = {
 	runner = { "Бег +30%", "Бег +45%, +выносливость", "Бег +60% и ПОДКАТ (Ctrl на бегу)" },
-	lumber = { "Деревянный топор, дерево ×2", "Каменный топор, дерево ×2", "Каменный топор, дерево ×3" },
+	lumber = { "Деревянный топор, дерево ×2", "Каменный топор, дерево ×2", "Железный топор, дерево ×3" },
 	miner = { "Деревянная кирка, руда +50%", "Каменная кирка, руда +75%", "Железная кирка, руда ×2" },
 	warrior = { "+40 здоровья, копьё", "+70 здоровья, копьё", "+100 здоровья, копьё и железный меч" },
 	builder = { "Чертёж, молоток, 20 досок", "+40 досок и сундук", "+60 досок, сундук и верстак" },
@@ -573,6 +573,7 @@ Items.Tools = {
 	iron_pickaxe = { Name = "Железная кирка", Kind = "pickaxe", Tier = 3, Damage = 11, Range = 9, Color = { 190, 190, 200 } },
 	wood_axe = { Name = "Деревянный топор", Kind = "axe", Tier = 1, Damage = 9, Range = 9, Color = { 120, 85, 50 } },
 	stone_axe = { Name = "Каменный топор", Kind = "axe", Tier = 2, Damage = 14, Range = 9, Color = { 120, 120, 125 } },
+	iron_axe = { Name = "Железный топор", Kind = "axe", Tier = 3, Damage = 20, Range = 9, Color = { 190, 190, 200 } },
 	spear = { Name = "Копьё", Kind = "spear", Tier = 0, Damage = 22, Range = 13, Color = { 120, 120, 125 } },
 	stone_sword = { Name = "Каменный меч", Kind = "sword", Tier = 0, Damage = 26, Range = 9, Color = { 130, 130, 135 } },
 	iron_sword = { Name = "Железный меч", Kind = "sword", Tier = 0, Damage = 40, Range = 9.5, Color = { 200, 200, 210 } },
@@ -616,6 +617,7 @@ Items.Recipes = {
 	{ Id = "upgrade2", Station = "bench", Level = 1, Name = "Улучшить верстак до 2 уровня", Cost = { wood = 20, stone = 20, iron = 6 } },
 	{ Id = "armor_leather", Name = "Кожаная броня (−20% урона)", Station = "bench", Level = 1, Cost = { fiber = 4, wood = 4 }, Armor = 1 },
 	{ Id = "iron_pickaxe", Station = "bench", Level = 2, Cost = { wood = 6, iron = 10 } },
+	{ Id = "iron_axe", Station = "bench", Level = 2, Cost = { wood = 6, iron = 8 } },
 	{ Id = "armor_iron", Name = "Железная броня (−40% урона)", Station = "bench", Level = 2, Cost = { iron = 14, fiber = 4 }, Armor = 2 },
 	{ Id = "armor_crystal", Name = "Кристальная броня (−55% урона)", Station = "bench", Level = 2, Cost = { crystal = 8, iron = 6, fang = 3 }, Armor = 3 },
 	{ Id = "iron_sword", Station = "bench", Level = 2, Cost = { wood = 6, iron = 14 } },
@@ -1397,7 +1399,7 @@ local function freshInventory(p)
 	local cls = profiles[p] and profiles[p].class or "none"
 	local lv = classLevel(p)
 	if cls == "lumber" then
-		table.insert(st.tools, lv >= 2 and "stone_axe" or "wood_axe")
+		table.insert(st.tools, ({ "wood_axe", "stone_axe", "iron_axe" })[lv])
 	elseif cls == "miner" then
 		table.insert(st.tools, ({ "wood_pickaxe", "stone_pickaxe", "iron_pickaxe" })[lv])
 	elseif cls == "warrior" then
@@ -8366,7 +8368,7 @@ end)
 
 -- настройки: музыка, громкость, вход в админ-панель
 local musicVolume = Config.Music.Volume or 0.4
-settingsPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 300), BackgroundColor3 = RGB(24, 26, 30), BackgroundTransparency = 0.05, Visible = false, ZIndex = 16 }, gui)
+settingsPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 356), BackgroundColor3 = RGB(24, 26, 30), BackgroundTransparency = 0.05, Visible = false, ZIndex = 16 }, gui)
 corner(settingsPanel, 14)
 -- «модальная» кнопка освобождает мышь, пока открыто окно (в виде от первого лица)
 make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, settingsPanel)
@@ -8403,7 +8405,16 @@ sBtn("Админ-панель", UDim2.fromOffset(30, 170), UDim2.fromOffset(320,
 	settingsPanel.Visible = false
 	adminPanel.Visible = true
 end)
-sBtn("Закрыть", UDim2.fromOffset(110, 236), UDim2.fromOffset(160, 44), RGB(90, 40, 30), function()
+local DEVNAMES = { pc = "Компьютер", touch = "Телефон / планшет", gamepad = "Контроллер" }
+local devB = sBtn("Устройство: авто", UDim2.fromOffset(30, 226), UDim2.fromOffset(320, 44), RGB(60, 90, 130), function()
+	local order = { "pc", "touch", "gamepad" }
+	local cur = table.find(order, player:GetAttribute("Device") or "") or 0
+	remote("SetDevice"):FireServer(order[cur % 3 + 1])
+end)
+player:GetAttributeChangedSignal("Device"):Connect(function()
+	devB.Text = "Устройство: " .. (DEVNAMES[player:GetAttribute("Device")] or "авто")
+end)
+sBtn("Закрыть", UDim2.fromOffset(110, 292), UDim2.fromOffset(160, 44), RGB(90, 40, 30), function()
 	settingsPanel.Visible = false
 end)
 
@@ -8884,13 +8895,13 @@ if Config.DevTools then
 	(function()
 	-- рамка админки: заголовок (свернуть/развернуть) и прокручиваемый список кнопок
 	local holder = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 68), Size = UDim2.fromOffset(200, 34), BackgroundTransparency = 1 }, gui)
-	local head = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(120, 70, 20), BackgroundTransparency = 0.1, Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = RGB(255, 230, 180), Text = "АДМИН-ПАНЕЛЬ ▾" }, holder)
+	local head = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(120, 70, 20), BackgroundTransparency = 0.1, Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = RGB(255, 230, 180), Text = "АДМИН-ПАНЕЛЬ  −" }, holder)
 	corner(head, 6)
 	local bar = make("ScrollingFrame", { Position = UDim2.fromOffset(0, 34), Size = UDim2.new(1, 0, 0, 300), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 5, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, holder)
 	local collapsed = false
 	head.Activated:Connect(function()
 		collapsed = not collapsed
-		head.Text = collapsed and "АДМИН-ПАНЕЛЬ ▸" or "АДМИН-ПАНЕЛЬ ▾"
+		head.Text = collapsed and "АДМИН-ПАНЕЛЬ  +" or "АДМИН-ПАНЕЛЬ  −"
 	end)
 	-- на телефоне — слева сверху (под кнопками Roblox, над джойстиком), на ПК — справа
 	RunService.RenderStepped:Connect(function()
@@ -9388,7 +9399,7 @@ local keysHint = make("TextLabel", {
 	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Right,
 	TextColor3 = RGB(200, 195, 180),
-	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню / забрать · Q — инвентарь · Tab — карта",
+	Text = "ЛКМ — удар · E — действие · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню / забрать · Q — инвентарь · Tab — карта",
 }, gui)
 
 ------------------------------------------------------------------
@@ -9404,6 +9415,10 @@ workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale
 
 local function touchMode()
 	local d = player:GetAttribute("Device")
+	-- планшет с клавиатурой: если пальцем трогаешь экран — показываем кнопки
+	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
+		return true
+	end
 	if d == "touch" then
 		return true
 	elseif d == "pc" or d == "gamepad" then

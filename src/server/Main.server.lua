@@ -344,7 +344,7 @@ local function freshInventory(p)
 	local cls = profiles[p] and profiles[p].class or "none"
 	local lv = classLevel(p)
 	if cls == "lumber" then
-		table.insert(st.tools, lv >= 2 and "stone_axe" or "wood_axe")
+		table.insert(st.tools, ({ "wood_axe", "stone_axe", "iron_axe" })[lv])
 	elseif cls == "miner" then
 		table.insert(st.tools, ({ "wood_pickaxe", "stone_pickaxe", "iron_pickaxe" })[lv])
 	elseif cls == "warrior" then

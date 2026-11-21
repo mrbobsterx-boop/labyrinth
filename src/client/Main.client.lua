@@ -1764,7 +1764,7 @@ end)
 
 -- настройки: музыка, громкость, вход в админ-панель
 local musicVolume = Config.Music.Volume or 0.4
-settingsPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 300), BackgroundColor3 = RGB(24, 26, 30), BackgroundTransparency = 0.05, Visible = false, ZIndex = 16 }, gui)
+settingsPanel = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(380, 356), BackgroundColor3 = RGB(24, 26, 30), BackgroundTransparency = 0.05, Visible = false, ZIndex = 16 }, gui)
 corner(settingsPanel, 14)
 -- «модальная» кнопка освобождает мышь, пока открыто окно (в виде от первого лица)
 make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = true }, settingsPanel)
@@ -1801,7 +1801,16 @@ sBtn("Админ-панель", UDim2.fromOffset(30, 170), UDim2.fromOffset(320,
 	settingsPanel.Visible = false
 	adminPanel.Visible = true
 end)
-sBtn("Закрыть", UDim2.fromOffset(110, 236), UDim2.fromOffset(160, 44), RGB(90, 40, 30), function()
+local DEVNAMES = { pc = "Компьютер", touch = "Телефон / планшет", gamepad = "Контроллер" }
+local devB = sBtn("Устройство: авто", UDim2.fromOffset(30, 226), UDim2.fromOffset(320, 44), RGB(60, 90, 130), function()
+	local order = { "pc", "touch", "gamepad" }
+	local cur = table.find(order, player:GetAttribute("Device") or "") or 0
+	remote("SetDevice"):FireServer(order[cur % 3 + 1])
+end)
+player:GetAttributeChangedSignal("Device"):Connect(function()
+	devB.Text = "Устройство: " .. (DEVNAMES[player:GetAttribute("Device")] or "авто")
+end)
+sBtn("Закрыть", UDim2.fromOffset(110, 292), UDim2.fromOffset(160, 44), RGB(90, 40, 30), function()
 	settingsPanel.Visible = false
 end)
 
@@ -2282,13 +2291,13 @@ if Config.DevTools then
 	(function()
 	-- рамка админки: заголовок (свернуть/развернуть) и прокручиваемый список кнопок
 	local holder = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 68), Size = UDim2.fromOffset(200, 34), BackgroundTransparency = 1 }, gui)
-	local head = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(120, 70, 20), BackgroundTransparency = 0.1, Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = RGB(255, 230, 180), Text = "АДМИН-ПАНЕЛЬ ▾" }, holder)
+	local head = make("TextButton", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = RGB(120, 70, 20), BackgroundTransparency = 0.1, Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = RGB(255, 230, 180), Text = "АДМИН-ПАНЕЛЬ  −" }, holder)
 	corner(head, 6)
 	local bar = make("ScrollingFrame", { Position = UDim2.fromOffset(0, 34), Size = UDim2.new(1, 0, 0, 300), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 5, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, holder)
 	local collapsed = false
 	head.Activated:Connect(function()
 		collapsed = not collapsed
-		head.Text = collapsed and "АДМИН-ПАНЕЛЬ ▸" or "АДМИН-ПАНЕЛЬ ▾"
+		head.Text = collapsed and "АДМИН-ПАНЕЛЬ  +" or "АДМИН-ПАНЕЛЬ  −"
 	end)
 	-- на телефоне — слева сверху (под кнопками Roblox, над джойстиком), на ПК — справа
 	RunService.RenderStepped:Connect(function()
@@ -2786,7 +2795,7 @@ local keysHint = make("TextLabel", {
 	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Right,
 	TextColor3 = RGB(200, 195, 180),
-	Text = "ЛКМ — удар · E (зажать) — добыть/собрать · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню / забрать · Q — инвентарь · Tab — карта",
+	Text = "ЛКМ — удар · E — действие · C — крафт · 1–9 — предмет · Ctrl — пригнуться · Shift — бег · H — ягоды · R — меню / забрать · Q — инвентарь · Tab — карта",
 }, gui)
 
 ------------------------------------------------------------------
@@ -2802,6 +2811,10 @@ workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale
 
 local function touchMode()
 	local d = player:GetAttribute("Device")
+	-- планшет с клавиатурой: если пальцем трогаешь экран — показываем кнопки
+	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
+		return true
+	end
 	if d == "touch" then
 		return true
 	elseif d == "pc" or d == "gamepad" then
